@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: greenops-db
+    environment:
+      POSTGRES_DB: greenops
+      POSTGRES_USER: greenops
+      POSTGRES_PASSWORD: greenops_password_change_me
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U greenops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # GreenOps Server
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: greenops-server
+    environment:
+      DATABASE_URL: postgresql://greenops:greenops_password_change_me@db:5432/greenops
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change_this_secret_key_in_production}
+      HOST: 0.0.0.0
+      PORT: 8000
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      CORS_ORIGINS: "*"
+      # Energy calculation settings
+      IDLE_POWER_WATTS: "65"
+      ACTIVE_POWER_WATTS: "120"
+      ELECTRICITY_COST_PER_KWH: "0.12"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  # Nginx (serves dashboard and proxies API)
+  nginx:
+    image: nginx:alpine
+    container_name: greenops-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./dashboard:/usr/share/nginx/html
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
