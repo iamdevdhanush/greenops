@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GreenOps - Infrastructure Monitoring</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="login-box">
+                <h1>GreenOps</h1>
+                <p class="subtitle">Infrastructure Monitoring Platform</p>
+                
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" required autocomplete="username">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required autocomplete="current-password">
+                    </div>
+                    
+                    <div id="login-error" class="error-message"></div>
+                    
+                    <button type="submit" class="btn-primary">Sign In</button>
+                </form>
+                
+                <p class="hint">Default credentials: admin / admin123</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard Screen -->
+    <div id="dashboard-screen" class="screen">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>GreenOps</h1>
+                <div class="header-actions">
+                    <span class="user-info">
+                        <span id="current-user"></span>
+                        <button id="logout-btn" class="btn-text">Logout</button>
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Stats Overview -->
+        <section class="stats-section">
+            <div class="stat-card">
+                <div class="stat-label">Total Machines</div>
+                <div class="stat-value" id="stat-total">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Online</div>
+                <div class="stat-value stat-success" id="stat-online">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Idle</div>
+                <div class="stat-value stat-warning" id="stat-idle">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Offline</div>
+                <div class="stat-value stat-error" id="stat-offline">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Energy Wasted</div>
+                <div class="stat-value" id="stat-energy">- kWh</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Estimated Cost</div>
+                <div class="stat-value" id="stat-cost">$-</div>
+            </div>
+        </section>
+
+        <!-- Machine List -->
+        <section class="machine-section">
+            <div class="section-header">
+                <h2>Machines</h2>
+                <div class="section-controls">
+                    <input type="text" id="search-input" placeholder="Search machines..." class="search-input">
+                    <select id="status-filter" class="filter-select">
+                        <option value="">All Status</option>
+                        <option value="online">Online</option>
+                        <option value="idle">Idle</option>
+                        <option value="offline">Offline</option>
+                    </select>
+                    <button id="refresh-btn" class="btn-secondary">Refresh</button>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Hostname</th>
+                            <th>MAC Address</th>
+                            <th>OS</th>
+                            <th>Status</th>
+                            <th>Last Seen</th>
+                            <th>Uptime (hrs)</th>
+                            <th>Idle Time</th>
+                            <th>Energy Waste (kWh)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="machine-table-body">
+                        <tr>
+                            <td colspan="8" class="loading">Loading machines...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
