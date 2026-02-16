@@ -1,61 +1,101 @@
 """
-GreenOps Server Configuration
-All settings configurable via environment variables
+GreenOps Agent Configuration
 """
 import os
-from typing import Optional
+import json
+from pathlib import Path
+import logging
 
-class Config:
-    """Server configuration - NO hardcoded values"""
-    
-    # Server
-    HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "8000"))
-    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
-    
-    # Database
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql://greenops:greenops@localhost:5432/greenops"
-    )
-    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "20"))
-    DB_MAX_OVERFLOW: int = int(os.getenv("DB_MAX_OVERFLOW", "10"))
-    
-    # Security
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "CHANGE_THIS_IN_PRODUCTION")
-    JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRATION_HOURS: int = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
-    
-    # Agent
-    AGENT_TOKEN_EXPIRATION_DAYS: Optional[int] = None  # No expiration for now
-    
-    # Rate Limiting
-    LOGIN_RATE_LIMIT: int = int(os.getenv("LOGIN_RATE_LIMIT", "5"))
-    LOGIN_RATE_WINDOW: int = int(os.getenv("LOGIN_RATE_WINDOW", "900"))  # 15 minutes
-    
-    # Energy Calculation Constants
-    # Desktop PC power consumption estimates based on industry averages
-    IDLE_POWER_WATTS: float = float(os.getenv("IDLE_POWER_WATTS", "65"))  # 65W average idle desktop
-    ACTIVE_POWER_WATTS: float = float(os.getenv("ACTIVE_POWER_WATTS", "120"))  # 120W average active desktop
-    ELECTRICITY_COST_PER_KWH: float = float(os.getenv("ELECTRICITY_COST_PER_KWH", "0.12"))  # $0.12/kWh US average
-    
-    # Agent Configuration
-    HEARTBEAT_TIMEOUT_SECONDS: int = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "180"))  # 3 minutes
-    IDLE_THRESHOLD_SECONDS: int = int(os.getenv("IDLE_THRESHOLD_SECONDS", "300"))  # 5 minutes
-    
-    # Logging
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-    LOG_FILE: str = os.getenv("LOG_FILE", "greenops.log")
-    
-    # CORS
-    CORS_ORIGINS: list = os.getenv("CORS_ORIGINS", "*").split(",")
-    
-    @classmethod
-    def validate(cls):
-        """Validate critical configuration"""
-        if cls.JWT_SECRET_KEY == "CHANGE_THIS_IN_PRODUCTION" and not cls.DEBUG:
-            raise ValueError("JWT_SECRET_KEY must be set in production!")
-        if not cls.DATABASE_URL:
-            raise ValueError("DATABASE_URL must be set!")
+logger = logging.getLogger(__name__)
 
-config = Config()
+class AgentConfig:
+    """Agent configuration management"""
+    
+    def __init__(self):
+        # Determine config directory based on platform
+        if os.name == 'nt':  # Windows
+            self.config_dir = Path(os.getenv('PROGRAMDATA', 'C:/ProgramData')) / 'GreenOps'
+        else:  # Linux/macOS
+            self.config_dir = Path.home() / '.greenops'
+        
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.config_file = self.config_dir / 'config.json'
+        self.token_file = self.config_dir / 'token'
+        
+        # Default configuration
+        self.server_url = os.getenv('GREENOPS_SERVER_URL', 'http://localhost:8000')
+        self.heartbeat_interval = int(os.getenv('GREENOPS_HEARTBEAT_INTERVAL', '60'))
+        self.idle_threshold = int(os.getenv('GREENOPS_IDLE_THRESHOLD', '300'))
+        self.retry_backoff_base = int(os.getenv('GREENOPS_RETRY_BASE', '5'))
+        self.retry_backoff_max = int(os.getenv('GREENOPS_RETRY_MAX', '300'))
+        self.max_retry_attempts = int(os.getenv('GREENOPS_MAX_RETRIES', '5'))
+        
+        # Load configuration file if exists
+        self.load_config()
+    
+    def load_config(self):
+        """Load configuration from file"""
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    config_data = json.load(f)
+                
+                # Override defaults with file config
+                self.server_url = config_data.get('server_url', self.server_url)
+                self.heartbeat_interval = config_data.get('heartbeat_interval', self.heartbeat_interval)
+                self.idle_threshold = config_data.get('idle_threshold', self.idle_threshold)
+                self.retry_backoff_base = config_data.get('retry_backoff_base', self.retry_backoff_base)
+                self.retry_backoff_max = config_data.get('retry_backoff_max', self.retry_backoff_max)
+                
+                logger.info(f"Configuration loaded from {self.config_file}")
+            except Exception as e:
+                logger.warning(f"Failed to load config file: {e}, using defaults")
+    
+    def save_config(self):
+        """Save current configuration to file"""
+        try:
+            config_data = {
+                'server_url': self.server_url,
+                'heartbeat_interval': self.heartbeat_interval,
+                'idle_threshold': self.idle_threshold,
+                'retry_backoff_base': self.retry_backoff_base,
+                'retry_backoff_max': self.retry_backoff_max
+            }
+            
+            with open(self.config_file, 'w') as f:
+                json.dump(config_data, f, indent=2)
+            
+            logger.info(f"Configuration saved to {self.config_file}")
+        except Exception as e:
+            logger.error(f"Failed to save config: {e}")
+    
+    def load_token(self) -> str:
+        """Load agent token from file"""
+        if self.token_file.exists():
+            try:
+                with open(self.token_file, 'r') as f:
+                    token = f.read().strip()
+                logger.info("Agent token loaded from file")
+                return token
+            except Exception as e:
+                logger.error(f"Failed to load token: {e}")
+        return None
+    
+    def save_token(self, token: str):
+        """Save agent token to file"""
+        try:
+            # Set restrictive permissions (owner read/write only)
+            with open(self.token_file, 'w') as f:
+                f.write(token)
+            
+            # Set file permissions (Unix only)
+            if os.name != 'nt':
+                os.chmod(self.token_file, 0o600)
+            
+            logger.info(f"Agent token saved to {self.token_file}")
+        except Exception as e:
+            logger.error(f"Failed to save token: {e}")
+            raise
+
+# Global config instance
+config = AgentConfig()
