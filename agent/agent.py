@@ -1,139 +1,280 @@
 """
-GreenOps Authentication Module
-- Argon2 password hashing
-- JWT token generation/validation
-- Agent token management
+GreenOps Agent
+Lightweight monitoring agent for tracking machine usage and energy waste
 """
-import jwt
-import hashlib
-import secrets
-from datetime import datetime, timedelta
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
-from typing import Optional, Dict
+import sys
+import time
 import logging
+import platform
+import requests
+import uuid
+from datetime import datetime
+from logging.handlers import RotatingFileHandler
+import signal
 
-from server.config import config
-from server.database import db
+from config import config
+from idle_detector import IdleDetector
+
+# Configure logging
+log_file = config.config_dir / 'agent.log'
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        RotatingFileHandler(
+            log_file,
+            maxBytes=5*1024*1024,  # 5 MB
+            backupCount=3
+        ),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 
 logger = logging.getLogger(__name__)
 
-# Argon2 hasher with secure defaults
-ph = PasswordHasher(
-    time_cost=2,
-    memory_cost=65536,  # 64 MB
-    parallelism=4
-)
-
-class AuthService:
-    """Authentication service"""
+class GreenOpsAgent:
+    """Main agent class"""
+    
+    def __init__(self):
+        self.config = config
+        self.idle_detector = IdleDetector()
+        self.token = None
+        self.machine_id = None
+        self.running = True
+        self.retry_delay = self.config.retry_backoff_base
+        self.consecutive_failures = 0
+        
+        # System information
+        self.mac_address = self.get_mac_address()
+        self.hostname = platform.node()
+        self.os_type = platform.system()
+        self.os_version = platform.version()
+        
+        logger.info(f"GreenOps Agent initialized")
+        logger.info(f"System: {self.hostname} ({self.os_type} {self.os_version})")
+        logger.info(f"MAC: {self.mac_address}")
+        logger.info(f"Server: {self.config.server_url}")
     
     @staticmethod
-    def hash_password(password: str) -> str:
-        """Hash password with argon2"""
-        return ph.hash(password)
-    
-    @staticmethod
-    def verify_password(password: str, password_hash: str) -> bool:
-        """Verify password against hash"""
+    def get_mac_address() -> str:
+        """
+        Get primary MAC address of the machine
+        
+        Returns:
+            MAC address in format: XX:XX:XX:XX:XX:XX
+        """
         try:
-            ph.verify(password_hash, password)
-            # Rehash if parameters changed
-            if ph.check_needs_rehash(password_hash):
-                return password_hash  # Return new hash if needed
-            return True
-        except VerifyMismatchError:
+            # Get MAC from uuid.getnode()
+            mac_int = uuid.getnode()
+            mac_hex = f"{mac_int:012x}"
+            mac_formatted = ':'.join(mac_hex[i:i+2] for i in range(0, 12, 2))
+            return mac_formatted.upper()
+        except Exception as e:
+            logger.error(f"Failed to get MAC address: {e}")
+            # Fallback: generate fake MAC for testing
+            return "00:00:00:00:00:00"
+    
+    def register(self) -> bool:
+        """
+        Register agent with server (idempotent)
+        
+        Returns:
+            True if registration successful, False otherwise
+        """
+        logger.info("Attempting to register with server...")
+        
+        try:
+            url = f"{self.config.server_url}/api/agents/register"
+            payload = {
+                'mac_address': self.mac_address,
+                'hostname': self.hostname,
+                'os_type': self.os_type,
+                'os_version': self.os_version
+            }
+            
+            response = requests.post(url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.token = data['token']
+                self.machine_id = data['machine_id']
+                
+                # Save token to file
+                self.config.save_token(self.token)
+                
+                logger.info(f"Registration successful! Machine ID: {self.machine_id}")
+                logger.info(f"Message: {data.get('message', 'N/A')}")
+                
+                return True
+            else:
+                logger.error(f"Registration failed: {response.status_code} - {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            logger.error(f"Cannot connect to server at {self.config.server_url}")
+            return False
+        except requests.exceptions.Timeout:
+            logger.error("Registration request timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Registration error: {e}")
             return False
     
-    @staticmethod
-    def generate_jwt(user_id: int, username: str, role: str) -> str:
-        """Generate JWT token for user"""
-        payload = {
-            'user_id': user_id,
-            'username': username,
-            'role': role,
-            'exp': datetime.utcnow() + timedelta(hours=config.JWT_EXPIRATION_HOURS),
-            'iat': datetime.utcnow()
-        }
-        return jwt.encode(payload, config.JWT_SECRET_KEY, algorithm=config.JWT_ALGORITHM)
-    
-    @staticmethod
-    def verify_jwt(token: str) -> Optional[Dict]:
-        """Verify JWT token and return payload"""
+    def send_heartbeat(self) -> bool:
+        """
+        Send heartbeat to server
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.token:
+            logger.error("No token available, cannot send heartbeat")
+            return False
+        
         try:
-            payload = jwt.decode(token, config.JWT_SECRET_KEY, algorithms=[config.JWT_ALGORITHM])
-            return payload
-        except jwt.ExpiredSignatureError:
-            logger.warning("JWT token expired")
-            return None
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"Invalid JWT token: {e}")
-            return None
+            # Get idle time
+            idle_seconds = self.idle_detector.get_idle_seconds()
+            
+            # Get system stats (placeholder - can be enhanced)
+            cpu_usage = 0.0  # TODO: Implement CPU monitoring
+            memory_usage = 0.0  # TODO: Implement memory monitoring
+            
+            url = f"{self.config.server_url}/api/agents/heartbeat"
+            headers = {
+                'Authorization': f'Bearer {self.token}',
+                'Content-Type': 'application/json'
+            }
+            payload = {
+                'idle_seconds': idle_seconds,
+                'cpu_usage': cpu_usage,
+                'memory_usage': memory_usage,
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                logger.debug(f"Heartbeat sent: idle={idle_seconds}s, status={data.get('machine_status')}")
+                return True
+            elif response.status_code == 401:
+                logger.error("Authentication failed - token may be invalid")
+                # Try to re-register
+                self.token = None
+                return False
+            else:
+                logger.error(f"Heartbeat failed: {response.status_code} - {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"Cannot connect to server (will retry)")
+            return False
+        except requests.exceptions.Timeout:
+            logger.warning("Heartbeat request timed out")
+            return False
+        except Exception as e:
+            logger.error(f"Heartbeat error: {e}")
+            return False
     
-    @staticmethod
-    def authenticate_user(username: str, password: str) -> Optional[Dict]:
-        """Authenticate user with username/password"""
-        query = "SELECT id, username, password_hash, role FROM users WHERE username = %s"
-        user = db.execute_one(query, (username,))
-        
-        if not user:
-            logger.warning(f"Login attempt for non-existent user: {username}")
-            return None
-        
-        if not AuthService.verify_password(password, user['password_hash']):
-            logger.warning(f"Failed login attempt for user: {username}")
-            return None
-        
-        logger.info(f"Successful login: {username}")
-        return {
-            'id': user['id'],
-            'username': user['username'],
-            'role': user['role']
-        }
-    
-    @staticmethod
-    def generate_agent_token() -> str:
-        """Generate secure random token for agent"""
-        return secrets.token_urlsafe(32)
-    
-    @staticmethod
-    def hash_agent_token(token: str) -> str:
-        """Hash agent token for storage"""
-        return hashlib.sha256(token.encode()).hexdigest()
-    
-    @staticmethod
-    def verify_agent_token(token: str) -> Optional[int]:
-        """Verify agent token and return machine_id"""
-        token_hash = AuthService.hash_agent_token(token)
-        
-        query = """
-            SELECT m.id, m.mac_address 
-            FROM machines m
-            JOIN agent_tokens at ON at.machine_id = m.id
-            WHERE at.token_hash = %s AND at.revoked = FALSE
+    def run(self):
         """
-        result = db.execute_one(query, (token_hash,))
+        Main agent loop
         
-        if not result:
-            logger.warning(f"Invalid agent token attempt (hash: {token_hash[:8]}...)")
-            return None
-        
-        return result['id']
-    
-    @staticmethod
-    def create_agent_token(machine_id: int) -> str:
-        """Create and store agent token for machine"""
-        token = AuthService.generate_agent_token()
-        token_hash = AuthService.hash_agent_token(token)
-        
-        # Upsert token (idempotent)
-        query = """
-            INSERT INTO agent_tokens (machine_id, token_hash, issued_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (machine_id) DO UPDATE
-            SET token_hash = EXCLUDED.token_hash, issued_at = NOW()
+        Lifecycle:
+        1. Load token or register
+        2. Send heartbeat every interval
+        3. Retry with exponential backoff on failure
+        4. Never give up
         """
-        db.execute_query(query, (machine_id, token_hash))
+        logger.info("Starting GreenOps Agent...")
         
-        logger.info(f"Agent token created for machine_id: {machine_id}")
-        return token
+        # Try to load existing token
+        self.token = self.config.load_token()
+        
+        if self.token:
+            logger.info("Loaded existing token from file")
+        else:
+            logger.info("No existing token found, will register on first heartbeat")
+        
+        while self.running:
+            try:
+                # Register if no token
+                if not self.token:
+                    if self.register():
+                        self.retry_delay = self.config.retry_backoff_base
+                        self.consecutive_failures = 0
+                    else:
+                        # Registration failed, retry with backoff
+                        self.consecutive_failures += 1
+                        self._handle_failure()
+                        continue
+                
+                # Send heartbeat
+                if self.send_heartbeat():
+                    # Success - reset retry parameters
+                    self.retry_delay = self.config.retry_backoff_base
+                    self.consecutive_failures = 0
+                    
+                    # Wait for next interval
+                    time.sleep(self.config.heartbeat_interval)
+                else:
+                    # Failure - apply backoff
+                    self.consecutive_failures += 1
+                    self._handle_failure()
+                    
+            except KeyboardInterrupt:
+                logger.info("Received interrupt signal, shutting down...")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
+                self.consecutive_failures += 1
+                self._handle_failure()
+        
+        logger.info("GreenOps Agent stopped")
+    
+    def _handle_failure(self):
+        """Handle failure with exponential backoff"""
+        if self.consecutive_failures >= self.config.max_retry_attempts:
+            logger.warning(f"Failed {self.consecutive_failures} consecutive times, continuing with backoff...")
+        
+        logger.info(f"Retrying in {self.retry_delay} seconds...")
+        time.sleep(self.retry_delay)
+        
+        # Exponential backoff
+        self.retry_delay = min(
+            self.retry_delay * 2,
+            self.config.retry_backoff_max
+        )
+    
+    def shutdown(self):
+        """Graceful shutdown"""
+        logger.info("Shutting down agent...")
+        self.running = False
+        
+        # Send final heartbeat (best effort)
+        try:
+            self.send_heartbeat()
+        except:
+            pass
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    logger.info(f"Received signal {signum}")
+    if 'agent' in globals():
+        agent.shutdown()
+    sys.exit(0)
+
+def main():
+    """Main entry point"""
+    global agent
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Create and run agent
+    agent = GreenOpsAgent()
+    agent.run()
+
+if __name__ == '__main__':
+    main()
