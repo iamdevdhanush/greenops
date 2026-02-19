@@ -1,23 +1,23 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
     container_name: greenops-db
+    env_file:
+      - .env
     environment:
       POSTGRES_DB: greenops
       POSTGRES_USER: greenops
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-greenops_password_change_me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U greenops"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U greenops -d greenops"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
   server:
@@ -25,28 +25,22 @@ services:
       context: .
       dockerfile: Dockerfile.server
     container_name: greenops-server
-    environment:
-      DATABASE_URL: postgresql://greenops:${POSTGRES_PASSWORD:-greenops_password_change_me}@db:5432/greenops
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-CHANGE_THIS_IN_PRODUCTION}
-      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
-      HOST: 0.0.0.0
-      PORT: 8000
-      DEBUG: "false"
-      LOG_LEVEL: INFO
-      CORS_ORIGINS: ${CORS_ORIGINS:-*}
-      IDLE_POWER_WATTS: "65"
-      ACTIVE_POWER_WATTS: "120"
-      ELECTRICITY_COST_PER_KWH: "0.12"
-      GUNICORN_WORKERS: "4"
-      GUNICORN_THREADS: "2"
-    ports:
-      - "8000:8000"
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "8000:8000"
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
+    command: >
+      sh -c "
+      echo 'Waiting for DB...' &&
+      sleep 3 &&
+      gunicorn -c gunicorn.conf.py server.main:app
+      "
 
   nginx:
     image: nginx:alpine
@@ -62,4 +56,4 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
+

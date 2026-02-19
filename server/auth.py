@@ -141,14 +141,3 @@ class AuthService:
     @staticmethod
     def hash_password(password: str) -> str:
         return ph.hash(password)
-```
-
-FILE: `requirements.txt`
-```
-Flask==3.0.3
-flask-cors==4.0.1
-gunicorn==21.2.0
-psycopg2-binary==2.9.9
-python-dotenv==1.0.1
-argon2-cffi==23.1.0
-PyJWT==2.8.0
