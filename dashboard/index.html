@@ -1,213 +1,74 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GreenOps — Infrastructure Monitor</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GreenOps — Infrastructure Control</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════
-     LOGIN SCREEN
-═══════════════════════════════════════════════════════════ -->
-<div id="login-screen" class="screen active">
-  <div class="login-bg">
-    <div class="login-grid"></div>
-  </div>
-  <div class="login-wrap">
-    <div class="login-card">
-      <div class="login-logo">
-        <span class="logo-dot"></span>
-        <span class="logo-text">GreenOps</span>
-      </div>
-      <h1 class="login-title">Sign in to monitor</h1>
-      <p class="login-sub">Infrastructure monitoring for sustainable IT</p>
+<div id="app">
 
-      <form id="login-form" autocomplete="off">
-        <div class="field-group">
-          <label class="field-label" for="username">Username</label>
-          <input class="field-input" id="username" type="text" placeholder="admin" autocomplete="username" required>
-        </div>
-        <div class="field-group">
-          <label class="field-label" for="password">Password</label>
-          <input class="field-input" id="password" type="password" placeholder="••••••••" autocomplete="current-password" required>
-        </div>
-        <div id="login-error" class="field-error hidden"></div>
-        <button type="submit" class="btn-primary btn-full">
-          <span class="btn-text">Sign In</span>
-          <span class="btn-spinner hidden"></span>
-        </button>
+  <!-- LOGIN -->
+  <div id="login-screen" class="screen active">
+    <div class="auth-card">
+      <h1 class="brand">GreenOps</h1>
+      <p class="auth-sub">Secure Infrastructure Monitoring</p>
+
+      <form id="login-form">
+        <input id="username" placeholder="Username" required />
+        <input id="password" type="password" placeholder="Password" required />
+        <div id="login-error" class="error hidden"></div>
+        <button class="btn-primary full">Sign In</button>
       </form>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════════════
-     CHANGE PASSWORD MODAL
-═══════════════════════════════════════════════════════════ -->
-<div id="change-pw-screen" class="screen">
-  <div class="modal-overlay">
-    <div class="modal-card">
-      <div class="modal-icon">
-        <i data-lucide="lock-keyhole"></i>
-      </div>
-      <h2 class="modal-title">Password Change Required</h2>
-      <p class="modal-sub">Your account uses a temporary password. Please set a secure one to continue.</p>
+  <!-- DASHBOARD -->
+  <div id="dashboard-screen" class="screen">
+    <aside class="sidebar">
+      <div class="logo">GreenOps</div>
+      <button id="logout-btn" class="btn-ghost">Logout</button>
+    </aside>
 
-      <form id="change-pw-form">
-        <div class="field-group">
-          <label class="field-label" for="cur-pw">Current Password</label>
-          <input class="field-input" id="cur-pw" type="password" placeholder="Current password" required>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1>Dashboard</h1>
+          <span class="sub">Live Infrastructure Overview</span>
         </div>
-        <div class="field-group">
-          <label class="field-label" for="new-pw">New Password</label>
-          <input class="field-input" id="new-pw" type="password" placeholder="Min. 8 characters" required>
+        <button id="refresh-btn" class="btn-ghost small">Refresh</button>
+      </header>
+
+      <section class="stats" id="stats">
+        <div class="stat">
+          <div class="stat-value" id="stat-total">—</div>
+          <div class="stat-label">Machines</div>
         </div>
-        <div class="field-group">
-          <label class="field-label" for="confirm-pw">Confirm New Password</label>
-          <input class="field-input" id="confirm-pw" type="password" placeholder="Repeat new password" required>
+        <div class="stat online">
+          <div class="stat-value" id="stat-online">—</div>
+          <div class="stat-label">Online</div>
         </div>
-        <div id="change-pw-error" class="field-error hidden"></div>
-        <button type="submit" class="btn-primary btn-full">Update Password</button>
-      </form>
-    </div>
+        <div class="stat idle">
+          <div class="stat-value" id="stat-idle">—</div>
+          <div class="stat-label">Idle</div>
+        </div>
+        <div class="stat offline">
+          <div class="stat-value" id="stat-offline">—</div>
+          <div class="stat-label">Offline</div>
+        </div>
+      </section>
+
+      <section id="machine-grid" class="grid"></section>
+
+    </main>
   </div>
+
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════
-     DASHBOARD SCREEN
-═══════════════════════════════════════════════════════════ -->
-<div id="dashboard-screen" class="screen">
-
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar-logo">
-      <span class="logo-dot"></span>
-      <span class="logo-text">GreenOps</span>
-    </div>
-
-    <nav class="sidebar-nav">
-      <a class="nav-item active" href="#">
-        <i data-lucide="layout-dashboard"></i>
-        <span>Dashboard</span>
-      </a>
-      <a class="nav-item" href="#" onclick="return false" style="opacity:.4;pointer-events:none">
-        <i data-lucide="settings"></i>
-        <span>Settings</span>
-      </a>
-    </nav>
-
-    <div class="sidebar-footer">
-      <div class="user-pill">
-        <div class="user-avatar"><i data-lucide="user-round"></i></div>
-        <span id="sidebar-user" class="user-name">admin</span>
-      </div>
-      <button id="logout-btn" class="logout-btn" title="Sign out">
-        <i data-lucide="log-out"></i>
-      </button>
-    </div>
-  </aside>
-
-  <!-- Main content -->
-  <main class="main">
-
-    <!-- Top bar -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <h1 class="page-title">Dashboard</h1>
-        <span class="page-sub">Live infrastructure overview</span>
-      </div>
-      <div class="topbar-right">
-        <div id="refresh-indicator" class="refresh-indicator" title="Auto-refreshes every 10s">
-          <span class="refresh-ring"></span>
-          <span class="refresh-label">Live</span>
-        </div>
-        <button id="refresh-btn" class="icon-btn" title="Refresh now">
-          <i data-lucide="refresh-cw"></i>
-        </button>
-      </div>
-    </header>
-
-    <!-- Stats row -->
-    <section class="stats-row">
-      <div class="stat-tile">
-        <div class="stat-icon tile-total"><i data-lucide="monitor"></i></div>
-        <div class="stat-body">
-          <div class="stat-val" id="stat-total">—</div>
-          <div class="stat-lbl">Total Machines</div>
-        </div>
-      </div>
-      <div class="stat-tile">
-        <div class="stat-icon tile-online"><i data-lucide="activity"></i></div>
-        <div class="stat-body">
-          <div class="stat-val online-val" id="stat-online">—</div>
-          <div class="stat-lbl">Online</div>
-        </div>
-      </div>
-      <div class="stat-tile">
-        <div class="stat-icon tile-idle"><i data-lucide="coffee"></i></div>
-        <div class="stat-body">
-          <div class="stat-val idle-val" id="stat-idle">—</div>
-          <div class="stat-lbl">Idle</div>
-        </div>
-      </div>
-      <div class="stat-tile">
-        <div class="stat-icon tile-offline"><i data-lucide="wifi-off"></i></div>
-        <div class="stat-body">
-          <div class="stat-val offline-val" id="stat-offline">—</div>
-          <div class="stat-lbl">Offline</div>
-        </div>
-      </div>
-      <div class="stat-tile stat-tile-wide">
-        <div class="stat-icon tile-energy"><i data-lucide="zap"></i></div>
-        <div class="stat-body">
-          <div class="stat-val" id="stat-energy">— kWh</div>
-          <div class="stat-lbl">Energy Wasted</div>
-        </div>
-        <div class="stat-cost-wrap">
-          <div class="stat-val stat-cost" id="stat-cost">$—</div>
-          <div class="stat-lbl">Est. Cost</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Controls -->
-    <div class="controls-bar">
-      <div class="search-wrap">
-        <i data-lucide="search" class="search-icon"></i>
-        <input id="search-input" class="search-field" type="text" placeholder="Search machines …">
-      </div>
-      <div class="filter-pills">
-        <button class="pill active" data-status="">All</button>
-        <button class="pill" data-status="online">
-          <span class="pill-dot online-dot"></span> Online
-        </button>
-        <button class="pill" data-status="idle">
-          <span class="pill-dot idle-dot"></span> Idle
-        </button>
-        <button class="pill" data-status="offline">
-          <span class="pill-dot offline-dot"></span> Offline
-        </button>
-      </div>
-    </div>
-
-    <!-- Machine cards -->
-    <section id="machine-grid" class="machine-grid">
-      <div class="empty-state">
-        <div class="empty-spinner"></div>
-        <p>Loading machines …</p>
-      </div>
-    </section>
-
-  </main>
-</div>
-
-<!-- Lucide icons -->
-<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
