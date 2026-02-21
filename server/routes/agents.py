@@ -1,11 +1,15 @@
 """
 GreenOps Agent Routes
+Adds:
+  - GET  /api/agents/commands         — agent polls for pending commands
+  - POST /api/agents/commands/{id}/result — agent reports execution result
 """
 import logging
 from datetime import datetime, timezone
 
 from flask import Blueprint, g, jsonify, request
 
+from server.database import db
 from server.middleware import require_agent_token
 from server.services.machine import MachineService
 
@@ -16,37 +20,23 @@ agents_bp = Blueprint("agents", __name__, url_prefix="/api/agents")
 
 @agents_bp.route("/health", methods=["GET"])
 def health():
-    """
-    GET /api/agents/health  (no auth required)
-    Returns: {"status": "healthy", "database": "connected", "timestamp": "..."}
-    """
     try:
-        from server.database import db
         db.execute_one("SELECT 1")
-        return jsonify(
-            {
-                "status": "healthy",
-                "database": "connected",
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-        ), 200
+        return jsonify({
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }), 200
     except Exception as exc:
         logger.error(f"Health check failed: {exc}")
-        return jsonify(
-            {
-                "status": "unhealthy",
-                "database": "disconnected",
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
-        ), 503
+        return jsonify({"status": "unhealthy", "database": "disconnected"}), 503
 
 
 @agents_bp.route("/register", methods=["POST"])
 def register():
     """
     POST /api/agents/register  (idempotent)
-    Body: {"mac_address": "...", "hostname": "...", "os_type": "...", "os_version": "..."}
-    Returns: {"token": "...", "machine_id": 42, "message": "..."}
+    Body: {mac_address, hostname, os_type, os_version}
     """
     try:
         data = request.get_json(silent=True)
@@ -56,21 +46,16 @@ def register():
         required = ["mac_address", "hostname", "os_type"]
         missing = [f for f in required if not data.get(f)]
         if missing:
-            return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
-
-        mac_address = str(data["mac_address"]).strip()[:17]
-        hostname = str(data["hostname"]).strip()[:255]
-        os_type = str(data["os_type"]).strip()[:50]
-        os_version = str(data.get("os_version", "")).strip()[:100] or None
+            return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
 
         result = MachineService.register_machine(
-            mac_address=mac_address,
-            hostname=hostname,
-            os_type=os_type,
-            os_version=os_version,
+            mac_address=str(data["mac_address"]).strip()[:17],
+            hostname=str(data["hostname"]).strip()[:255],
+            os_type=str(data["os_type"]).strip()[:50],
+            os_version=str(data.get("os_version", "")).strip()[:100] or None,
         )
 
-        logger.info(f"Agent registered: mac={mac_address[:8]}*** msg={result['message']}")
+        logger.info(f"Agent registered: mac={data['mac_address'][:8]}*** msg={result['message']}")
         return jsonify(result), 200
 
     except Exception as exc:
@@ -84,8 +69,7 @@ def heartbeat():
     """
     POST /api/agents/heartbeat
     Headers: Authorization: Bearer <agent_token>
-    Body: {"idle_seconds": 600, "cpu_usage": 15.5, "memory_usage": 42.3, "timestamp": "..."}
-    Returns: {"status": "ok", "machine_status": "idle", "energy_wasted_kwh": 12.456}
+    Body: {idle_seconds, cpu_usage, memory_usage, uptime_seconds, timestamp}
     """
     try:
         data = request.get_json(silent=True)
@@ -116,6 +100,13 @@ def heartbeat():
             except (TypeError, ValueError):
                 pass
 
+        uptime_seconds = None
+        if data.get("uptime_seconds") is not None:
+            try:
+                uptime_seconds = int(data["uptime_seconds"])
+            except (TypeError, ValueError):
+                pass
+
         timestamp = None
         if data.get("timestamp"):
             try:
@@ -131,6 +122,7 @@ def heartbeat():
             idle_seconds=idle_seconds,
             cpu_usage=cpu_usage,
             memory_usage=memory_usage,
+            uptime_seconds=uptime_seconds,
             timestamp=timestamp,
         )
 
@@ -140,4 +132,71 @@ def heartbeat():
         return jsonify({"error": f"Invalid data: {exc}"}), 422
     except Exception as exc:
         logger.error(f"Heartbeat error: {exc}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@agents_bp.route("/commands", methods=["GET"])
+@require_agent_token
+def get_commands():
+    """
+    GET /api/agents/commands
+    Agent polls this every heartbeat interval for pending commands.
+    Returns pending commands for the authenticated machine.
+    Marks them 'pending' (they stay pending until the agent reports result).
+    """
+    try:
+        commands = db.execute_query(
+            """
+            SELECT id, command
+            FROM machine_commands
+            WHERE machine_id = %s
+              AND status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 5
+            """,
+            (g.machine_id,),
+            fetch=True,
+        )
+        return jsonify({
+            "commands": [{"id": c["id"], "command": c["command"]} for c in (commands or [])],
+        }), 200
+    except Exception as exc:
+        logger.error(f"Get commands error: {exc}", exc_info=True)
+        return jsonify({"error": "Internal server error"}), 500
+
+
+@agents_bp.route("/commands/<int:command_id>/result", methods=["POST"])
+@require_agent_token
+def report_command_result(command_id: int):
+    """
+    POST /api/agents/commands/{id}/result
+    Body: {"status": "executed" | "failed", "message": "optional detail"}
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        status = data.get("status", "executed")
+        if status not in ("executed", "failed"):
+            status = "executed"
+
+        message = str(data.get("message", ""))[:500] or None
+
+        updated = db.execute_query(
+            """
+            UPDATE machine_commands
+            SET status = %s, executed_at = NOW(), result_msg = %s
+            WHERE id = %s AND machine_id = %s AND status = 'pending'
+            """,
+            (status, message, command_id, g.machine_id),
+        )
+
+        if not updated:
+            return jsonify({"error": "Command not found or already processed"}), 404
+
+        logger.info(
+            f"Command {command_id} reported {status} by machine {g.machine_id}: {message}"
+        )
+        return jsonify({"message": "Result recorded"}), 200
+
+    except Exception as exc:
+        logger.error(f"Command result error: {exc}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500

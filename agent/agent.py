@@ -1,40 +1,98 @@
 """
-GreenOps Agent
-Lightweight monitoring agent for tracking machine usage and energy waste
+GreenOps Agent v2.0
+Improvements over v1:
+  - Heartbeat interval: 10 seconds (was 60) for near-real-time status
+  - Sends uptime_seconds from system boot time (not accumulated heartbeats)
+  - Polls for remote commands (sleep / shutdown) on every heartbeat
+  - Attempts DISPLAY=:0 explicitly for xprintidle on desktop Linux
+  - Cleaner retry/backoff logic
 """
+import os
 import sys
 import time
 import logging
 import platform
-import requests
-import uuid
-from datetime import datetime
-from logging.handlers import RotatingFileHandler
 import signal
+import subprocess
+import uuid
+import requests
+from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 
 from config import config
 from idle_detector import IdleDetector
 
-# Configure logging
-log_file = config.config_dir / 'agent.log'
+# ── Logging ───────────────────────────────────────────────────────────────────
+log_file = config.config_dir / "agent.log"
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
     handlers=[
-        RotatingFileHandler(
-            log_file,
-            maxBytes=5*1024*1024,  # 5 MB
-            backupCount=3
-        ),
-        logging.StreamHandler(sys.stdout)
-    ]
+        RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3),
+        logging.StreamHandler(sys.stdout),
+    ],
 )
-
 logger = logging.getLogger(__name__)
 
+
+# ── Remote command execution ──────────────────────────────────────────────────
+
+def _execute_command(command: str) -> tuple[bool, str]:
+    """
+    Execute a remote command (sleep or shutdown).
+    Returns (success, message).
+    """
+    os_name = platform.system()
+
+    if command == "sleep":
+        if os_name == "Linux":
+            cmds = [["systemctl", "suspend"], ["pm-suspend"]]
+        elif os_name == "Windows":
+            cmds = [["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]]
+        elif os_name == "Darwin":
+            cmds = [["pmset", "sleepnow"]]
+        else:
+            return False, f"Unsupported OS: {os_name}"
+
+    elif command == "shutdown":
+        if os_name == "Linux":
+            cmds = [["systemctl", "poweroff"], ["shutdown", "-h", "now"]]
+        elif os_name == "Windows":
+            cmds = [["shutdown", "/s", "/t", "0"]]
+        elif os_name == "Darwin":
+            cmds = [["shutdown", "-h", "now"]]
+        else:
+            return False, f"Unsupported OS: {os_name}"
+
+    else:
+        return False, f"Unknown command: {command}"
+
+    for cmd in cmds:
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                logger.info(f"Command '{command}' executed via {cmd[0]}")
+                return True, f"Executed: {' '.join(cmd)}"
+            else:
+                logger.warning(
+                    f"Command {cmd[0]} returned {result.returncode}: {result.stderr.strip()}"
+                )
+        except FileNotFoundError:
+            logger.debug(f"{cmd[0]} not found, trying next")
+        except subprocess.TimeoutExpired:
+            logger.error(f"Command timed out: {' '.join(cmd)}")
+        except Exception as exc:
+            logger.error(f"Command error {cmd[0]}: {exc}")
+
+    return False, f"All methods to execute '{command}' failed"
+
+
+# ── Agent ─────────────────────────────────────────────────────────────────────
+
 class GreenOpsAgent:
-    """Main agent class"""
-    
+
     def __init__(self):
         self.config = config
         self.idle_detector = IdleDetector()
@@ -43,159 +101,148 @@ class GreenOpsAgent:
         self.running = True
         self.retry_delay = self.config.retry_backoff_base
         self.consecutive_failures = 0
-        
-        # System information
-        self.mac_address = self.get_mac_address()
+
+        self.mac_address = self._get_mac_address()
         self.hostname = platform.node()
         self.os_type = platform.system()
         self.os_version = platform.version()
-        
-        logger.info(f"GreenOps Agent initialized")
-        logger.info(f"System: {self.hostname} ({self.os_type} {self.os_version})")
+
+        logger.info(f"GreenOps Agent v2.0 initialised")
+        logger.info(f"System: {self.hostname} ({self.os_type})")
         logger.info(f"MAC: {self.mac_address}")
         logger.info(f"Server: {self.config.server_url}")
-    
+        logger.info(f"Heartbeat interval: {self.config.heartbeat_interval}s")
+
     @staticmethod
-    def get_mac_address() -> str:
-        """
-        Get primary MAC address of the machine
-        
-        Returns:
-            MAC address in format: XX:XX:XX:XX:XX:XX
-        """
+    def _get_mac_address() -> str:
         try:
-            # Get MAC from uuid.getnode()
             mac_int = uuid.getnode()
             mac_hex = f"{mac_int:012x}"
-            mac_formatted = ':'.join(mac_hex[i:i+2] for i in range(0, 12, 2))
-            return mac_formatted.upper()
-        except Exception as e:
-            logger.error(f"Failed to get MAC address: {e}")
-            # Fallback: generate fake MAC for testing
+            return ":".join(mac_hex[i:i+2] for i in range(0, 12, 2)).upper()
+        except Exception as exc:
+            logger.error(f"Failed to get MAC: {exc}")
             return "00:00:00:00:00:00"
-    
+
     def register(self) -> bool:
-        """
-        Register agent with server (idempotent)
-        
-        Returns:
-            True if registration successful, False otherwise
-        """
-        logger.info("Attempting to register with server...")
-        
+        logger.info("Registering with server …")
         try:
-            url = f"{self.config.server_url}/api/agents/register"
-            payload = {
-                'mac_address': self.mac_address,
-                'hostname': self.hostname,
-                'os_type': self.os_type,
-                'os_version': self.os_version
-            }
-            
-            response = requests.post(url, json=payload, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.token = data['token']
-                self.machine_id = data['machine_id']
-                
-                # Save token to file
+            resp = requests.post(
+                f"{self.config.server_url}/api/agents/register",
+                json={
+                    "mac_address": self.mac_address,
+                    "hostname": self.hostname,
+                    "os_type": self.os_type,
+                    "os_version": self.os_version,
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self.token = data["token"]
+                self.machine_id = data["machine_id"]
                 self.config.save_token(self.token)
-                
-                logger.info(f"Registration successful! Machine ID: {self.machine_id}")
-                logger.info(f"Message: {data.get('message', 'N/A')}")
-                
+                logger.info(
+                    f"Registered successfully. Machine ID: {self.machine_id} "
+                    f"({data.get('message', '')})"
+                )
                 return True
             else:
-                logger.error(f"Registration failed: {response.status_code} - {response.text}")
+                logger.error(f"Registration failed: {resp.status_code} {resp.text}")
                 return False
-                
         except requests.exceptions.ConnectionError:
-            logger.error(f"Cannot connect to server at {self.config.server_url}")
+            logger.error(f"Cannot connect to {self.config.server_url}")
             return False
-        except requests.exceptions.Timeout:
-            logger.error("Registration request timed out")
+        except Exception as exc:
+            logger.error(f"Registration error: {exc}")
             return False
-        except Exception as e:
-            logger.error(f"Registration error: {e}")
-            return False
-    
+
     def send_heartbeat(self) -> bool:
-        """
-        Send heartbeat to server
-        
-        Returns:
-            True if successful, False otherwise
-        """
         if not self.token:
-            logger.error("No token available, cannot send heartbeat")
             return False
-        
         try:
-            # Get idle time
             idle_seconds = self.idle_detector.get_idle_seconds()
-            
-            # Get system stats (placeholder - can be enhanced)
-            cpu_usage = 0.0  # TODO: Implement CPU monitoring
-            memory_usage = 0.0  # TODO: Implement memory monitoring
-            
-            url = f"{self.config.server_url}/api/agents/heartbeat"
-            headers = {
-                'Authorization': f'Bearer {self.token}',
-                'Content-Type': 'application/json'
-            }
-            payload = {
-                'idle_seconds': idle_seconds,
-                'cpu_usage': cpu_usage,
-                'memory_usage': memory_usage,
-                'timestamp': datetime.utcnow().isoformat() + 'Z'
-            }
-            
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                logger.debug(f"Heartbeat sent: idle={idle_seconds}s, status={data.get('machine_status')}")
+            uptime_seconds = self.idle_detector.get_uptime_seconds()
+
+            resp = requests.post(
+                f"{self.config.server_url}/api/agents/heartbeat",
+                json={
+                    "idle_seconds": idle_seconds,
+                    "cpu_usage": 0.0,
+                    "memory_usage": 0.0,
+                    "uptime_seconds": uptime_seconds,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.debug(
+                    f"Heartbeat OK — idle={idle_seconds}s, "
+                    f"uptime={uptime_seconds}s, "
+                    f"status={data.get('machine_status')}"
+                )
                 return True
-            elif response.status_code == 401:
-                logger.error("Authentication failed - token may be invalid")
-                # Try to re-register
+            elif resp.status_code == 401:
+                logger.error("Token rejected — re-registering")
                 self.token = None
                 return False
             else:
-                logger.error(f"Heartbeat failed: {response.status_code} - {response.text}")
+                logger.error(f"Heartbeat failed: {resp.status_code} {resp.text}")
                 return False
-                
         except requests.exceptions.ConnectionError:
-            logger.warning(f"Cannot connect to server (will retry)")
+            logger.warning("Cannot reach server (will retry)")
             return False
-        except requests.exceptions.Timeout:
-            logger.warning("Heartbeat request timed out")
+        except Exception as exc:
+            logger.error(f"Heartbeat error: {exc}")
             return False
-        except Exception as e:
-            logger.error(f"Heartbeat error: {e}")
-            return False
-    
+
+    def poll_commands(self) -> None:
+        """Check for and execute pending remote commands."""
+        if not self.token:
+            return
+        try:
+            resp = requests.get(
+                f"{self.config.server_url}/api/agents/commands",
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return
+
+            commands = resp.json().get("commands", [])
+            for cmd in commands:
+                cmd_id = cmd["id"]
+                command = cmd["command"]
+                logger.info(f"Executing remote command: {command} (id={cmd_id})")
+
+                success, message = _execute_command(command)
+                status = "executed" if success else "failed"
+
+                # Report result back to server
+                try:
+                    requests.post(
+                        f"{self.config.server_url}/api/agents/commands/{cmd_id}/result",
+                        json={"status": status, "message": message},
+                        headers={"Authorization": f"Bearer {self.token}"},
+                        timeout=5,
+                    )
+                except Exception as exc:
+                    logger.error(f"Failed to report command result: {exc}")
+
+        except requests.exceptions.ConnectionError:
+            pass  # Server unreachable — not critical for command polling
+        except Exception as exc:
+            logger.error(f"Command poll error: {exc}")
+
     def run(self):
-        """
-        Main agent loop
-        
-        Lifecycle:
-        1. Load token or register
-        2. Send heartbeat every interval
-        3. Retry with exponential backoff on failure
-        4. Never give up
-        """
-        logger.info("Starting GreenOps Agent...")
-        
-        # Try to load existing token
+        logger.info("Agent starting …")
         self.token = self.config.load_token()
-        
         if self.token:
-            logger.info("Loaded existing token from file")
+            logger.info("Loaded existing token")
         else:
-            logger.info("No existing token found, will register on first heartbeat")
-        
+            logger.info("No token found — will register on first cycle")
+
         while self.running:
             try:
                 # Register if no token
@@ -204,77 +251,63 @@ class GreenOpsAgent:
                         self.retry_delay = self.config.retry_backoff_base
                         self.consecutive_failures = 0
                     else:
-                        # Registration failed, retry with backoff
                         self.consecutive_failures += 1
-                        self._handle_failure()
+                        self._backoff()
                         continue
-                
-                # Send heartbeat
+
+                # Heartbeat + command poll on the same cycle
                 if self.send_heartbeat():
-                    # Success - reset retry parameters
+                    self.poll_commands()
                     self.retry_delay = self.config.retry_backoff_base
                     self.consecutive_failures = 0
-                    
-                    # Wait for next interval
                     time.sleep(self.config.heartbeat_interval)
                 else:
-                    # Failure - apply backoff
                     self.consecutive_failures += 1
-                    self._handle_failure()
-                    
+                    self._backoff()
+
             except KeyboardInterrupt:
-                logger.info("Received interrupt signal, shutting down...")
+                logger.info("Interrupted — shutting down")
                 break
-            except Exception as e:
-                logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
+            except Exception as exc:
+                logger.error(f"Unexpected error: {exc}", exc_info=True)
                 self.consecutive_failures += 1
-                self._handle_failure()
-        
-        logger.info("GreenOps Agent stopped")
-    
-    def _handle_failure(self):
-        """Handle failure with exponential backoff"""
+                self._backoff()
+
+        logger.info("Agent stopped.")
+
+    def _backoff(self):
         if self.consecutive_failures >= self.config.max_retry_attempts:
-            logger.warning(f"Failed {self.consecutive_failures} consecutive times, continuing with backoff...")
-        
-        logger.info(f"Retrying in {self.retry_delay} seconds...")
+            logger.warning(
+                f"{self.consecutive_failures} consecutive failures. "
+                f"Retrying in {self.retry_delay}s …"
+            )
+        else:
+            logger.info(f"Retry in {self.retry_delay}s …")
         time.sleep(self.retry_delay)
-        
-        # Exponential backoff
-        self.retry_delay = min(
-            self.retry_delay * 2,
-            self.config.retry_backoff_max
-        )
-    
+        self.retry_delay = min(self.retry_delay * 2, self.config.retry_backoff_max)
+
     def shutdown(self):
-        """Graceful shutdown"""
-        logger.info("Shutting down agent...")
+        logger.info("Shutting down agent …")
         self.running = False
-        
-        # Send final heartbeat (best effort)
-        try:
-            self.send_heartbeat()
-        except:
-            pass
+
+
+agent = None
+
 
 def signal_handler(signum, frame):
-    """Handle shutdown signals"""
     logger.info(f"Received signal {signum}")
-    if 'agent' in globals():
+    if agent:
         agent.shutdown()
     sys.exit(0)
 
+
 def main():
-    """Main entry point"""
     global agent
-    
-    # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Create and run agent
     agent = GreenOpsAgent()
     agent.run()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

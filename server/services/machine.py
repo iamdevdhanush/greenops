@@ -1,10 +1,12 @@
 """
 GreenOps Machine Service
-Machine registration, heartbeat processing, and status management.
+Updated: stores uptime_seconds from agent (accurate boot-time uptime).
 """
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+
+import psycopg2.extras as pg_extras
 
 from server.auth import AuthService
 from server.config import config
@@ -23,10 +25,6 @@ class MachineService:
         os_type: str,
         os_version: str = None,
     ) -> dict:
-        """
-        Idempotent machine registration using a single atomic upsert.
-        Two concurrent registrations of the same MAC address are safe.
-        """
         mac_address = mac_address.upper().replace("-", ":")
 
         result = db.execute_one(
@@ -48,12 +46,10 @@ class MachineService:
 
         machine_id = result["id"]
         was_inserted = result["inserted"]
-
         token = AuthService.create_agent_token(machine_id)
-
         message = "Machine registered successfully" if was_inserted else "Machine already registered"
-        logger.info(f"Registration: mac={mac_address[:8]}*** id={machine_id} new={was_inserted}")
 
+        logger.info(f"Registration: mac={mac_address[:8]}*** id={machine_id} new={was_inserted}")
         return {"machine_id": machine_id, "token": token, "message": message}
 
     @staticmethod
@@ -62,15 +58,9 @@ class MachineService:
         idle_seconds: int,
         cpu_usage: float = None,
         memory_usage: float = None,
+        uptime_seconds: int = None,
         timestamp: datetime = None,
     ) -> dict:
-        """
-        Process a single agent heartbeat.
-        Incremental idle time is derived by comparing against the previous
-        heartbeat so that cumulative energy totals are not inflated.
-        The UPDATE and INSERT are wrapped in a single connection so they
-        share the same transaction.
-        """
         if timestamp is None:
             timestamp = datetime.now(timezone.utc)
         elif timestamp.tzinfo is None:
@@ -105,21 +95,27 @@ class MachineService:
 
         energy_waste = EnergyService.calculate_idle_energy_waste(int(incremental_idle))
 
+        # Build uptime update fragment
+        uptime_sql = ", uptime_seconds = %s" if uptime_seconds is not None else ""
+        uptime_params = (uptime_seconds,) if uptime_seconds is not None else ()
+
         with db.get_connection() as conn:
-            import psycopg2.extras as extras
-            with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
+            with conn.cursor(cursor_factory=pg_extras.RealDictCursor) as cur:
                 cur.execute(
-                    """
+                    f"""
                     UPDATE machines
                     SET last_seen            = %s,
                         status               = %s,
                         total_idle_seconds   = total_idle_seconds + %s,
                         energy_wasted_kwh    = energy_wasted_kwh + %s,
                         updated_at           = NOW()
+                        {uptime_sql}
                     WHERE id = %s
                     RETURNING energy_wasted_kwh
                     """,
-                    (timestamp, status, int(incremental_idle), energy_waste, machine_id),
+                    (timestamp, status, int(incremental_idle), energy_waste)
+                    + uptime_params
+                    + (machine_id,),
                 )
                 updated = cur.fetchone()
 
@@ -133,13 +129,13 @@ class MachineService:
                 )
 
         if not updated:
-            logger.error(f"Heartbeat: machine id={machine_id} not found in DB")
             raise ValueError(f"Machine {machine_id} not found")
 
         logger.info(
             f"Heartbeat: id={machine_id} status={status} "
             f"idle={idle_seconds}s increment={int(incremental_idle)}s "
             f"energy_delta={energy_waste} kWh"
+            + (f" uptime={uptime_seconds}s" if uptime_seconds else "")
         )
 
         return {
@@ -155,7 +151,7 @@ class MachineService:
             """
             SELECT id, mac_address, hostname, os_type, os_version,
                    first_seen, last_seen, total_idle_seconds, total_active_seconds,
-                   energy_wasted_kwh, status, created_at, updated_at
+                   energy_wasted_kwh, status, uptime_seconds, created_at, updated_at
             FROM machines
             WHERE id = %s
             """,
@@ -164,14 +160,13 @@ class MachineService:
         return dict(machine) if machine else None
 
     @staticmethod
-    def list_machines(
-        status_filter: str = None, limit: int = 100, offset: int = 0
-    ) -> list:
+    def list_machines(status_filter: str = None, limit: int = 100, offset: int = 0) -> list:
         if status_filter:
             machines = db.execute_query(
                 """
                 SELECT id, mac_address, hostname, os_type, status, last_seen,
-                       energy_wasted_kwh, total_idle_seconds, total_active_seconds
+                       energy_wasted_kwh, total_idle_seconds, total_active_seconds,
+                       uptime_seconds
                 FROM machines
                 WHERE status = %s
                 ORDER BY last_seen DESC
@@ -184,7 +179,8 @@ class MachineService:
             machines = db.execute_query(
                 """
                 SELECT id, mac_address, hostname, os_type, status, last_seen,
-                       energy_wasted_kwh, total_idle_seconds, total_active_seconds
+                       energy_wasted_kwh, total_idle_seconds, total_active_seconds,
+                       uptime_seconds
                 FROM machines
                 ORDER BY last_seen DESC
                 LIMIT %s OFFSET %s
@@ -199,35 +195,31 @@ class MachineService:
         stats = db.execute_one(
             """
             SELECT
-                COUNT(*)                                            AS total_machines,
-                COUNT(CASE WHEN status = 'online'  THEN 1 END)    AS online_machines,
-                COUNT(CASE WHEN status = 'idle'    THEN 1 END)    AS idle_machines,
-                COUNT(CASE WHEN status = 'offline' THEN 1 END)    AS offline_machines,
-                COALESCE(SUM(energy_wasted_kwh),      0)          AS total_energy_wasted_kwh,
-                COALESCE(SUM(total_idle_seconds),     0)          AS total_idle_seconds,
-                COALESCE(SUM(total_active_seconds),   0)          AS total_active_seconds
+                COUNT(*)                                         AS total_machines,
+                COUNT(CASE WHEN status = 'online'  THEN 1 END)  AS online_machines,
+                COUNT(CASE WHEN status = 'idle'    THEN 1 END)  AS idle_machines,
+                COUNT(CASE WHEN status = 'offline' THEN 1 END)  AS offline_machines,
+                COALESCE(SUM(energy_wasted_kwh),    0)          AS total_energy_wasted_kwh,
+                COALESCE(SUM(total_idle_seconds),   0)          AS total_idle_seconds,
+                COALESCE(SUM(total_active_seconds), 0)          AS total_active_seconds
             FROM machines
             """
         )
 
         if not stats or stats["total_machines"] == 0:
             return {
-                "total_machines": 0,
-                "online_machines": 0,
-                "idle_machines": 0,
-                "offline_machines": 0,
+                "total_machines": 0, "online_machines": 0,
+                "idle_machines": 0, "offline_machines": 0,
                 "total_energy_wasted_kwh": 0.0,
                 "estimated_cost_usd": 0.0,
                 "average_idle_percentage": 0.0,
             }
 
         cost = EnergyService.calculate_cost(Decimal(str(stats["total_energy_wasted_kwh"])))
-
         total_time = int(stats["total_idle_seconds"]) + int(stats["total_active_seconds"])
         avg_idle_pct = (
             round(int(stats["total_idle_seconds"]) / total_time * 100, 1)
-            if total_time > 0
-            else 0.0
+            if total_time > 0 else 0.0
         )
 
         return {
@@ -248,10 +240,8 @@ class MachineService:
         updated = db.execute_query(
             """
             UPDATE machines
-            SET status     = 'offline',
-                updated_at = NOW()
-            WHERE last_seen < %s
-              AND status != 'offline'
+            SET status = 'offline', updated_at = NOW()
+            WHERE last_seen < %s AND status != 'offline'
             RETURNING id, hostname
             """,
             (timeout,),
