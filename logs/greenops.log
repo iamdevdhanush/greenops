@@ -820,3 +820,82 @@ Ensure DATABASE_URL is correct and PostgreSQL is running.
 2026-02-24 14:42:06,333 server.database                INFO     Database pool closed.
 2026-02-24 14:42:06,334 server.database                INFO     Database pool closed.
 2026-02-24 14:42:06,337 server.database                INFO     Database pool closed.
+2026-02-24 14:45:58,317 server.main                    INFO     create_app() starting — pid=1, debug=False, log=/app/logs/greenops.log
+2026-02-24 14:45:58,321 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 14:45:58,329 server.database                INFO     Database connectivity verified.
+2026-02-24 14:45:58,392 server.main                    INFO     Schema migrations complete.
+2026-02-24 14:45:58,397 server.main                    INFO     Applying ADMIN_INITIAL_PASSWORD …
+2026-02-24 14:45:58,407 server.main                    INFO     ADMIN_INITIAL_PASSWORD skipped — admin password already changed by user.
+2026-02-24 14:45:58,409 server.main                    INFO     Offline checker started (interval=60s, pid=1).
+2026-02-24 14:45:58,410 server.main                    INFO     GreenOps server initialised and ready.
+2026-02-24 14:45:58,463 server.database                INFO     Database pool closed.
+2026-02-24 14:45:58,463 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 14:45:58,471 server.database                INFO     Database connectivity verified.
+2026-02-24 14:45:58,570 server.database                INFO     Database pool closed.
+2026-02-24 14:45:58,571 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 14:45:58,580 server.database                INFO     Database connectivity verified.
+2026-02-24 14:46:28,967 server.database                INFO     Database pool closed.
+2026-02-24 14:46:28,967 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 14:46:28,975 server.database                INFO     Database connectivity verified.
+2026-02-24 14:46:28,982 server.database                INFO     Database pool closed.
+2026-02-24 14:46:28,982 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 14:46:28,990 server.database                INFO     Database connectivity verified.
+2026-02-24 14:46:34,043 server.routes.dashboard        INFO     Machine deleted: id=1 hostname=Ubuntu
+2026-02-24 14:46:37,729 server.routes.dashboard        INFO     Machine deleted: id=2 hostname=LAPTOP-L5P9GC77
+2026-02-24 14:47:27,200 server.services.machine        INFO     Registration: mac=08:00:27*** id=3 new=True
+2026-02-24 14:47:27,200 server.routes.agents           INFO     Agent registered: mac=08:00:27*** msg=Machine registered successfully
+2026-02-24 14:47:27,249 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=2634s
+2026-02-24 14:48:27,332 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=2694s
+2026-02-24 14:49:27,529 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=2754s
+2026-02-24 14:50:30,217 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=2815s
+2026-02-24 14:51:33,707 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=2879s
+2026-02-24 14:52:38,091 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=2943s
+2026-02-24 14:53:41,964 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3007s
+2026-02-24 14:54:44,908 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3071s
+2026-02-24 14:55:43,922 server.auth                    INFO     Successful login for user id=1
+2026-02-24 14:55:45,603 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3133s
+2026-02-24 14:56:47,428 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3193s
+2026-02-24 14:57:04,005 server.services.machine        INFO     Registration: mac=C1:98:34*** id=4 new=True
+2026-02-24 14:57:04,005 server.routes.agents           INFO     Agent registered: mac=C1:98:34*** msg=Machine registered successfully
+2026-02-24 14:57:04,103 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3758s
+2026-02-24 14:57:48,539 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3255s
+2026-02-24 14:58:04,230 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3819s
+2026-02-24 14:58:48,780 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3316s
+2026-02-24 14:59:04,425 server.services.machine        INFO     Heartbeat: id=4 status=online idle=7s increment=0s energy_delta=0.000 kWh uptime=3879s
+2026-02-24 14:59:51,253 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3377s
+2026-02-24 15:00:05,708 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3939s
+2026-02-24 15:00:52,830 server.services.machine        INFO     Heartbeat: id=3 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=3440s
+2026-02-24 15:01:06,318 server.services.machine        INFO     Heartbeat: id=4 status=online idle=22s increment=0s energy_delta=0.000 kWh uptime=4001s
+2026-02-24 15:01:42,192 server.database                INFO     Database pool closed.
+2026-02-24 15:01:42,653 server.database                INFO     Database pool closed.
+2026-02-24 15:01:42,871 server.database                INFO     Database pool closed.
+2026-02-24 15:01:42,887 server.database                INFO     Database pool closed.
+2026-02-24 15:02:16,626 server.main                    INFO     create_app() starting — pid=1, debug=False, log=/app/logs/greenops.log
+2026-02-24 15:02:16,627 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 15:02:16,639 server.database                INFO     Database connectivity verified.
+2026-02-24 15:02:16,694 server.main                    INFO     Schema migrations complete.
+2026-02-24 15:02:16,699 server.main                    INFO     Applying ADMIN_INITIAL_PASSWORD …
+2026-02-24 15:02:16,709 server.main                    INFO     ADMIN_INITIAL_PASSWORD skipped — admin password already changed by user.
+2026-02-24 15:02:16,711 server.main                    INFO     Offline checker started (interval=60s, pid=1).
+2026-02-24 15:02:16,711 server.main                    INFO     GreenOps server initialised and ready.
+2026-02-24 15:02:16,741 server.database                INFO     Database pool closed.
+2026-02-24 15:02:16,741 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 15:02:16,745 server.database                INFO     Database pool closed.
+2026-02-24 15:02:16,745 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 15:02:16,749 server.database                INFO     Database connectivity verified.
+2026-02-24 15:02:16,753 server.database                INFO     Database connectivity verified.
+2026-02-24 15:02:16,824 server.database                INFO     Database pool closed.
+2026-02-24 15:02:16,825 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 15:02:16,841 server.database                INFO     Database connectivity verified.
+2026-02-24 15:02:44,580 server.auth                    INFO     Successful login for user id=1
+2026-02-24 15:02:47,502 server.database                INFO     Database pool closed.
+2026-02-24 15:02:47,502 server.database                INFO     Database pool created (minconn=0, maxconn=10, keepalives=on).
+2026-02-24 15:02:47,509 server.database                INFO     Database connectivity verified.
+2026-02-24 15:03:09,503 server.routes.dashboard        INFO     Command 'sleep' queued for machine 4 by user 1 (cmd_id=68)
+2026-02-24 15:03:22,929 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4136s
+2026-02-24 15:03:25,910 server.routes.agents           INFO     Command 68 executed by machine 4: Executed: rundll32.exe powrprof.dll,SetSuspendState 0,1,0
+2026-02-24 15:04:16,842 server.services.machine        INFO     Machine offline: id=3 hostname=Ubuntu
+2026-02-24 15:04:16,842 server.main                    INFO     Offline checker: 1 machine(s) marked offline.
+2026-02-24 15:04:26,038 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4213s
+2026-02-24 15:05:26,199 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4274s
+2026-02-24 15:06:26,387 server.services.machine        INFO     Heartbeat: id=4 status=online idle=60s increment=0s energy_delta=0.000 kWh uptime=4334s
