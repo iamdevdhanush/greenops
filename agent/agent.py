@@ -1,11 +1,9 @@
 """
 GreenOps Agent v2.0
-Improvements over v1:
-  - Heartbeat interval: 10 seconds (was 60) for near-real-time status
-  - Sends uptime_seconds from system boot time (not accumulated heartbeats)
-  - Polls for remote commands (sleep / shutdown) on every heartbeat
-  - Attempts DISPLAY=:0 explicitly for xprintidle on desktop Linux
-  - Cleaner retry/backoff logic
+Heartbeat interval: 60 seconds (configurable)
+Sends uptime_seconds from /proc/uptime (accurate system uptime)
+Polls for remote commands (sleep / shutdown) on every heartbeat
+Graceful shutdown on SIGINT/SIGTERM
 """
 import os
 import sys
@@ -38,10 +36,7 @@ logger = logging.getLogger(__name__)
 # ── Remote command execution ──────────────────────────────────────────────────
 
 def _execute_command(command: str) -> tuple[bool, str]:
-    """
-    Execute a remote command (sleep or shutdown).
-    Returns (success, message).
-    """
+    """Execute a remote command (sleep or shutdown). Returns (success, message)."""
     os_name = platform.system()
 
     if command == "sleep":
@@ -69,16 +64,12 @@ def _execute_command(command: str) -> tuple[bool, str]:
 
     for cmd in cmds:
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 logger.info(f"Command '{command}' executed via {cmd[0]}")
                 return True, f"Executed: {' '.join(cmd)}"
             else:
-                logger.warning(
-                    f"Command {cmd[0]} returned {result.returncode}: {result.stderr.strip()}"
-                )
+                logger.warning(f"Command {cmd[0]} returned {result.returncode}: {result.stderr.strip()}")
         except FileNotFoundError:
             logger.debug(f"{cmd[0]} not found, trying next")
         except subprocess.TimeoutExpired:
@@ -107,7 +98,7 @@ class GreenOpsAgent:
         self.os_type = platform.system()
         self.os_version = platform.version()
 
-        logger.info(f"GreenOps Agent v2.0 initialised")
+        logger.info("GreenOps Agent v2.0 initialised")
         logger.info(f"System: {self.hostname} ({self.os_type})")
         logger.info(f"MAC: {self.mac_address}")
         logger.info(f"Server: {self.config.server_url}")
@@ -219,7 +210,6 @@ class GreenOpsAgent:
                 success, message = _execute_command(command)
                 status = "executed" if success else "failed"
 
-                # Report result back to server
                 try:
                     requests.post(
                         f"{self.config.server_url}/api/agents/commands/{cmd_id}/result",
@@ -245,7 +235,6 @@ class GreenOpsAgent:
 
         while self.running:
             try:
-                # Register if no token
                 if not self.token:
                     if self.register():
                         self.retry_delay = self.config.retry_backoff_base
@@ -255,7 +244,6 @@ class GreenOpsAgent:
                         self._backoff()
                         continue
 
-                # Heartbeat + command poll on the same cycle
                 if self.send_heartbeat():
                     self.poll_commands()
                     self.retry_delay = self.config.retry_backoff_base
