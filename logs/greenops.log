@@ -814,3 +814,9 @@ Ensure DATABASE_URL is correct and PostgreSQL is running.
 2026-02-24 14:29:29,269 server.services.machine        INFO     Heartbeat: id=1 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=1556s
 2026-02-24 14:30:29,349 server.services.machine        INFO     Heartbeat: id=1 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=1616s
 2026-02-24 14:31:29,486 server.services.machine        INFO     Heartbeat: id=1 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=1676s
+2026-02-24 14:34:56,081 server.services.machine        INFO     Machine offline: id=1 hostname=Ubuntu
+2026-02-24 14:34:56,082 server.main                    INFO     Offline checker: 1 machine(s) marked offline.
+2026-02-24 14:42:05,766 server.database                INFO     Database pool closed.
+2026-02-24 14:42:06,333 server.database                INFO     Database pool closed.
+2026-02-24 14:42:06,334 server.database                INFO     Database pool closed.
+2026-02-24 14:42:06,337 server.database                INFO     Database pool closed.

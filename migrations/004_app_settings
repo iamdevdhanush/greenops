@@ -1,0 +1,36 @@
+-- GreenOps Migration 004 — App Settings Table
+-- Replaces ENV-based runtime config with DB-persisted settings.
+-- Safe to run multiple times (idempotent).
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         VARCHAR(100) PRIMARY KEY,
+    value       TEXT         NOT NULL,
+    description TEXT,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- Seed defaults (only insert if not already present)
+INSERT INTO app_settings (key, value, description) VALUES
+    ('electricity_cost_per_kwh', '0.12',        'Electricity rate for cost calculations (USD/kWh)'),
+    ('idle_power_watts',         '65',           'Assumed idle power draw per machine (watts)'),
+    ('currency',                 'USD',          'Display currency for cost calculations'),
+    ('idle_threshold_seconds',   '300',          'Seconds of inactivity before marking machine as idle'),
+    ('heartbeat_timeout_seconds','180',          'Seconds without heartbeat before marking machine offline'),
+    ('agent_heartbeat_interval', '60',           'Recommended agent heartbeat interval (seconds)'),
+    ('organization_name',        'GreenOps',     'Display name for the organization'),
+    ('log_level',                'INFO',         'Server log verbosity (DEBUG/INFO/WARNING/ERROR)')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION set_app_setting_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_app_settings_updated_at ON app_settings;
+CREATE TRIGGER trg_app_settings_updated_at
+    BEFORE UPDATE ON app_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION set_app_setting_updated_at();
