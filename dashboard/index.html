@@ -3,585 +3,1274 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>GreenOps — Infrastructure Control</title>
+<title>GreenOps</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
+/* ══════════════════════════════════════════════════
+   GREENOPS — TERMINAL-INSPIRED LINUX MONITORING UI
+   ══════════════════════════════════════════════════ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
 :root{
-  --bg-deep:#080e0b;--bg-base:#0c1410;--bg-surface:#101a14;--bg-card:#131f18;
-  --bg-elevated:#1c2e21;--bg-input:#0f1a12;
-  --border:rgba(255,255,255,.055);--border-hover:rgba(255,255,255,.10);
-  --border-accent:rgba(52,211,107,.25);
-  --green:#34d36b;--green-dim:#22a352;
-  --green-glow:rgba(52,211,107,.15);--green-glow-sm:rgba(52,211,107,.08);
-  --online:#34d36b;--online-bg:rgba(52,211,107,.10);
-  --idle:#f59e0b;--idle-bg:rgba(245,158,11,.10);
-  --offline:#f87171;--offline-bg:rgba(248,113,113,.10);
-  --text-primary:#e8f5eb;--text-secondary:#8aac92;
-  --text-muted:#4d6854;--text-faint:#2d4035;
-  --shadow-sm:0 1px 3px rgba(0,0,0,.4);
-  --shadow-md:0 4px 16px rgba(0,0,0,.5);
-  --shadow-lg:0 12px 40px rgba(0,0,0,.6);
-  --shadow-glow:0 0 24px rgba(52,211,107,.12);
-  --r-sm:8px;--r-md:12px;--r-lg:16px;--r-xl:20px;--r-2xl:24px;
-  --t-fast:.15s cubic-bezier(.4,0,.2,1);--t-smooth:.25s cubic-bezier(.4,0,.2,1)
+  /* Terminal palette */
+  --bg0:#0a0e0b;
+  --bg1:#0e1410;
+  --bg2:#121a14;
+  --bg3:#172019;
+  --bg4:#1e2d20;
+  --bg5:#253525;
+
+  --border0:rgba(52,211,83,.06);
+  --border1:rgba(52,211,83,.12);
+  --border2:rgba(52,211,83,.22);
+  --border3:rgba(52,211,83,.35);
+
+  --g0:#34d353; /* primary green */
+  --g1:#28a83f;
+  --g2:#1d7a2e;
+  --g3:#134f1e;
+
+  --fg0:#d4e8d6;
+  --fg1:#9dbfa0;
+  --fg2:#6a8f6d;
+  --fg3:#3d5c40;
+  --fg4:#243529;
+
+  --yellow:#c8a83c;
+  --amber:#e08020;
+  --red:#d44;
+  --cyan:#3aaccc;
+  --blue:#4a90d9;
+
+  --status-online:#34d353;
+  --status-idle:#c8a83c;
+  --status-offline:#d44444;
+
+  --mono:'JetBrains Mono',monospace;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+
+  --r2:2px;--r4:4px;--r6:6px;--r8:8px;
 }
-html{font-size:14px}
-body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg-deep);
-  color:var(--text-primary);min-height:100vh;-webkit-font-smoothing:antialiased;overflow:hidden}
-.screen{display:none;width:100%;height:100vh}
+
+html{font-size:13px;height:100%}
+body{
+  font-family:var(--sans);
+  background:var(--bg0);
+  color:var(--fg0);
+  height:100%;
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+  cursor:default;
+}
+
+/* ── Scan lines overlay ── */
+body::after{
+  content:'';
+  position:fixed;inset:0;
+  pointer-events:none;
+  z-index:9999;
+  background:repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,.03) 2px,
+    rgba(0,0,0,.03) 4px
+  );
+}
+
+.screen{display:none;width:100%;height:100vh;flex-direction:column}
 .screen.active{display:flex}
 
-/* ── LOGIN ── */
-#login-screen,#change-pw-screen{align-items:center;justify-content:center;
-  position:relative;overflow:hidden;background:var(--bg-deep)}
-.login-bg{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.login-grid{position:absolute;inset:0;
-  background-image:linear-gradient(rgba(52,211,107,.03) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(52,211,107,.03) 1px,transparent 1px);
-  background-size:40px 40px;
-  mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,black 40%,transparent 100%)}
-.login-orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.35}
-.login-orb-1{width:500px;height:500px;
-  background:radial-gradient(circle,rgba(52,211,107,.3),transparent 70%);
-  top:-150px;left:-100px;animation:orbFloat 8s ease-in-out infinite alternate}
-.login-orb-2{width:400px;height:400px;
-  background:radial-gradient(circle,rgba(34,163,82,.2),transparent 70%);
-  bottom:-100px;right:-80px;animation:orbFloat 10s ease-in-out infinite alternate-reverse}
-@keyframes orbFloat{from{transform:translate(0,0) scale(1)}to{transform:translate(30px,20px) scale(1.05)}}
+/* ══════════════════════════════
+   LOGIN
+   ══════════════════════════════ */
+#login-screen{
+  align-items:center;justify-content:center;
+  background:var(--bg0);
+  position:relative;overflow:hidden;
+}
 
-.auth-wrap{position:relative;z-index:2;width:100%;max-width:400px;padding:24px}
-.auth-card{background:rgba(19,31,24,.85);border:1px solid var(--border);
-  border-radius:var(--r-2xl);padding:36px;
-  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  box-shadow:var(--shadow-lg),0 0 60px rgba(0,0,0,.4);
-  animation:cardIn .5s cubic-bezier(.16,1,.3,1) both}
-@keyframes cardIn{from{opacity:0;transform:translateY(20px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+/* Matrix-style falling chars bg */
+#login-screen canvas{
+  position:absolute;inset:0;opacity:.15;pointer-events:none;
+}
 
-.auth-logo{display:flex;align-items:center;gap:10px;margin-bottom:28px;
-  font-size:15px;font-weight:600;color:var(--text-primary)}
-.logo-mark{width:32px;height:32px;
-  background:linear-gradient(135deg,var(--green-dim),var(--green));
-  border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;
-  color:#fff;box-shadow:0 2px 12px rgba(52,211,107,.3);flex-shrink:0}
-.auth-title{font-size:22px;font-weight:700;color:var(--text-primary);
-  margin-bottom:6px;letter-spacing:-.3px}
-.auth-sub{font-size:13px;color:var(--text-muted);margin-bottom:28px;line-height:1.5}
-.pw-badge{display:inline-flex;align-items:center;gap:6px;
-  background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.25);
-  color:var(--idle);font-size:11.5px;font-weight:500;padding:5px 10px;
-  border-radius:999px;margin-bottom:16px}
-.field-group{margin-bottom:16px}
-.field-label{display:block;font-size:12px;font-weight:500;color:var(--text-secondary);
-  margin-bottom:6px;letter-spacing:.02em}
-.field-wrap{position:relative}
-.field-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);
-  width:15px;height:15px;color:var(--text-muted);pointer-events:none}
-.field-wrap input{width:100%;padding:10px 14px 10px 36px;background:var(--bg-input);
-  border:1px solid var(--border);border-radius:var(--r-md);color:var(--text-primary);
-  font-family:inherit;font-size:13.5px;transition:border-color var(--t-fast),box-shadow var(--t-fast);
-  outline:none}
-.field-wrap input::placeholder{color:var(--text-faint)}
-.field-wrap input:focus{border-color:var(--border-accent);box-shadow:0 0 0 3px var(--green-glow-sm)}
-.form-error{display:flex;align-items:center;gap:8px;
-  background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.2);
-  border-radius:var(--r-sm);padding:10px 12px;color:var(--offline);
-  font-size:12.5px;margin-bottom:16px}
+.login-box{
+  position:relative;z-index:2;
+  width:380px;
+  border:1px solid var(--border2);
+  background:rgba(14,20,16,.92);
+  backdrop-filter:blur(8px);
+}
+
+.login-header{
+  padding:16px 20px 14px;
+  border-bottom:1px solid var(--border1);
+  display:flex;align-items:center;gap:10px;
+  background:rgba(52,211,83,.04);
+}
+.login-header-dots{display:flex;gap:6px}
+.login-dot{width:10px;height:10px;border-radius:50%}
+.login-dot.r{background:#d44}
+.login-dot.y{background:var(--yellow)}
+.login-dot.g{background:var(--g0)}
+.login-title-bar{
+  font-family:var(--mono);font-size:11px;
+  color:var(--fg2);flex:1;text-align:center;
+  letter-spacing:.08em;
+}
+
+.login-body{padding:28px 24px}
+
+.login-prompt{
+  font-family:var(--mono);font-size:11px;
+  color:var(--g0);margin-bottom:20px;
+  letter-spacing:.05em;
+}
+.login-prompt::before{content:'$ ';color:var(--fg3)}
+
+.login-field{margin-bottom:16px}
+.login-label{
+  display:block;
+  font-family:var(--mono);font-size:10.5px;
+  color:var(--fg2);margin-bottom:6px;
+  letter-spacing:.06em;text-transform:uppercase;
+}
+.login-input-wrap{
+  display:flex;align-items:center;
+  border:1px solid var(--border1);
+  background:var(--bg1);
+  transition:border-color .15s;
+}
+.login-input-wrap:focus-within{border-color:var(--border3)}
+.login-prompt-char{
+  font-family:var(--mono);font-size:12px;
+  color:var(--g0);padding:0 8px 0 10px;
+  flex-shrink:0;
+}
+.login-input-wrap input{
+  flex:1;padding:9px 10px 9px 0;
+  background:transparent;border:none;
+  color:var(--fg0);font-family:var(--mono);font-size:12px;
+  outline:none;
+}
+.login-input-wrap input::placeholder{color:var(--fg4)}
+
+.login-error{
+  font-family:var(--mono);font-size:11px;
+  color:var(--red);padding:8px 10px;
+  border:1px solid rgba(221,68,68,.2);
+  background:rgba(221,68,68,.06);
+  margin-bottom:14px;
+}
+.login-error::before{content:'[ERR] '}
 .hidden{display:none!important}
-.btn-submit{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;
-  background:linear-gradient(135deg,#22a352 0%,#34d36b 100%);border:none;
-  border-radius:var(--r-md);padding:12px 20px;color:#fff;font-family:inherit;
-  font-size:14px;font-weight:600;cursor:pointer;transition:all var(--t-smooth);
-  position:relative;overflow:hidden;letter-spacing:.01em}
-.btn-submit:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(52,211,107,.3)}
-.btn-submit:active{transform:translateY(0)}
-.btn-submit:disabled{opacity:.55;pointer-events:none}
-.spin{animation:spinAnim .8s linear infinite}
-@keyframes spinAnim{to{transform:rotate(360deg)}}
-.auth-footer{text-align:center;font-size:11.5px;color:var(--text-faint);margin-top:20px}
 
-/* ── DASHBOARD ── */
-#dashboard-screen{background:var(--bg-base);overflow:hidden}
-.sidebar{width:228px;flex-shrink:0;background:var(--bg-surface);
-  border-right:1px solid var(--border);display:flex;flex-direction:column;
-  height:100vh;overflow:hidden}
-.sidebar-header{padding:20px 18px 16px;border-bottom:1px solid var(--border)}
-.sidebar-logo{display:flex;align-items:center;gap:9px;font-size:14.5px;
-  font-weight:600;color:var(--text-primary);letter-spacing:-.1px}
-.sidebar-nav{flex:1;padding:16px 10px;overflow-y:auto}
-.nav-section-label{font-size:10.5px;font-weight:600;text-transform:uppercase;
-  letter-spacing:.08em;color:var(--text-faint);padding:0 8px;
-  margin-bottom:4px;margin-top:4px}
-.nav-item{display:flex;align-items:center;gap:9px;padding:9px 10px;
-  border-radius:var(--r-sm);color:var(--text-muted);text-decoration:none;
-  font-size:13.5px;font-weight:450;transition:all var(--t-fast);
-  cursor:pointer;margin-bottom:1px;border:1px solid transparent}
-.nav-item:hover{background:var(--bg-elevated);color:var(--text-primary)}
-.nav-item.active{background:var(--green-glow);color:var(--green);border-color:var(--border-accent)}
-.sidebar-footer{padding:14px 12px;border-top:1px solid var(--border)}
-.sidebar-user-row{display:flex;align-items:center;gap:10px}
-.user-avatar{width:30px;height:30px;
-  background:linear-gradient(135deg,var(--green-dim),var(--green));
-  border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-size:12px;font-weight:600;color:#fff;flex-shrink:0}
-.user-info{flex:1;min-width:0}
-.user-name{font-size:13px;font-weight:500;color:var(--text-primary);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.user-role{font-size:11px;color:var(--text-muted)}
-.logout-btn{width:28px;height:28px;border-radius:var(--r-sm);
-  border:1px solid var(--border);background:transparent;color:var(--text-muted);
-  display:flex;align-items:center;justify-content:center;cursor:pointer;
-  transition:all var(--t-fast);flex-shrink:0}
-.logout-btn:hover{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3);color:var(--offline)}
+.login-btn{
+  width:100%;padding:10px;
+  background:transparent;
+  border:1px solid var(--border2);
+  color:var(--g0);font-family:var(--mono);font-size:12px;
+  font-weight:500;cursor:pointer;
+  letter-spacing:.05em;text-transform:uppercase;
+  transition:all .15s;position:relative;overflow:hidden;
+}
+.login-btn:hover{background:rgba(52,211,83,.08);border-color:var(--border3)}
+.login-btn:disabled{opacity:.4;pointer-events:none}
+.login-btn::before{
+  content:'';position:absolute;
+  top:0;left:-100%;width:100%;height:1px;
+  background:linear-gradient(90deg,transparent,var(--g0),transparent);
+  transition:left .4s;
+}
+.login-btn:hover::before{left:100%}
 
-.main-content{flex:1;display:flex;flex-direction:column;overflow-y:auto;
-  scrollbar-width:thin;scrollbar-color:var(--bg-elevated) transparent}
-.main-content::-webkit-scrollbar{width:5px}
-.main-content::-webkit-scrollbar-thumb{background:var(--bg-elevated);border-radius:99px}
+.login-footer{
+  padding:12px 24px;border-top:1px solid var(--border0);
+  font-family:var(--mono);font-size:10px;
+  color:var(--fg4);letter-spacing:.04em;
+}
 
-.topbar{display:flex;align-items:center;justify-content:space-between;
-  padding:20px 28px;border-bottom:1px solid var(--border);
-  background:var(--bg-surface);flex-shrink:0;position:sticky;top:0;z-index:10}
-.page-title{font-size:17px;font-weight:650;color:var(--text-primary);
-  letter-spacing:-.25px;margin-bottom:3px}
-.breadcrumb{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)}
-.breadcrumb-current{color:var(--green)}
-.topbar-right{display:flex;align-items:center;gap:10px}
-.refresh-status{display:flex;align-items:center;gap:6px;background:var(--bg-elevated);
-  border:1px solid var(--border);border-radius:999px;padding:5px 12px;
-  font-size:12px;color:var(--text-secondary)}
-.refresh-dot{width:6px;height:6px;border-radius:50%;background:var(--green);
-  box-shadow:0 0 6px var(--green);animation:pulse 2s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.btn-icon-only{width:34px;height:34px;border-radius:var(--r-sm);
-  border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-secondary);
-  display:flex;align-items:center;justify-content:center;cursor:pointer;
-  transition:all var(--t-fast)}
-.btn-icon-only:hover{border-color:var(--border-hover);color:var(--text-primary);background:var(--bg-card)}
-.btn-icon-only.spinning svg{animation:spinAnim .7s linear infinite}
+/* ── Change PW screen (same style) ── */
+#change-pw-screen{align-items:center;justify-content:center;background:var(--bg0)}
+.changepw-box{
+  width:380px;border:1px solid var(--border2);
+  background:rgba(14,20,16,.95);
+}
+.changepw-warn{
+  padding:10px 16px;
+  background:rgba(200,168,60,.07);
+  border-bottom:1px solid rgba(200,168,60,.2);
+  font-family:var(--mono);font-size:10.5px;
+  color:var(--yellow);letter-spacing:.04em;
+}
+.changepw-warn::before{content:'[SECURITY] '}
 
-.stats-row{display:flex;gap:14px;padding:24px 28px 0;flex-shrink:0}
-.stat-card{flex:1;background:var(--bg-card);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:18px 20px 14px;position:relative;
-  overflow:hidden;transition:all var(--t-smooth);cursor:default}
-.stat-card:hover{border-color:var(--border-hover);transform:translateY(-2px);box-shadow:var(--shadow-md)}
-.stat-card-inner{display:flex;align-items:center;gap:14px}
-.stat-icon-wrap{width:38px;height:38px;border-radius:var(--r-sm);
-  display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.stat-icon-neutral{background:rgba(138,172,146,.1);color:var(--text-secondary)}
-.stat-icon-online{background:var(--online-bg);color:var(--online)}
-.stat-icon-idle{background:var(--idle-bg);color:var(--idle)}
-.stat-icon-offline{background:var(--offline-bg);color:var(--offline)}
-.stat-icon-energy{background:rgba(52,211,107,.08);color:var(--green)}
-.stat-value{font-size:26px;font-weight:700;color:var(--text-primary);
-  letter-spacing:-.5px;line-height:1;font-family:'DM Mono',monospace}
-.stat-value.stat-online{color:var(--online)}
-.stat-value.stat-idle{color:var(--idle)}
-.stat-value.stat-offline{color:var(--offline)}
-.stat-label{font-size:11.5px;color:var(--text-muted);margin-top:3px;font-weight:450}
-.stat-bar{position:absolute;bottom:0;left:0;height:2px;border-radius:0 2px 2px 0;
-  transition:width .8s cubic-bezier(.4,0,.2,1)}
-.stat-bar-online{background:var(--online)}
-.stat-bar-idle{background:var(--idle)}
-.stat-bar-offline{background:var(--offline)}
-.stat-card-energy{flex:1.3}
-.stat-sub{font-size:11px;color:var(--text-muted);margin-top:10px;margin-left:52px;font-family:'DM Mono',monospace}
+/* ══════════════════════════════
+   DASHBOARD LAYOUT
+   ══════════════════════════════ */
+#dashboard-screen{
+  flex-direction:row;
+  background:var(--bg0);
+}
 
-.controls-row{display:flex;align-items:center;gap:12px;padding:20px 28px 0}
-.search-wrap{flex:1;position:relative}
-.search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);
-  width:15px;height:15px;color:var(--text-muted);pointer-events:none}
-.search-input{width:100%;background:var(--bg-card);border:1px solid var(--border);
-  border-radius:var(--r-md);padding:9px 14px 9px 36px;color:var(--text-primary);
-  font-family:inherit;font-size:13px;outline:none;
-  transition:border-color var(--t-fast),box-shadow var(--t-fast)}
-.search-input::placeholder{color:var(--text-faint)}
-.search-input:focus{border-color:var(--border-accent);box-shadow:0 0 0 3px var(--green-glow-sm)}
-.filter-pills{display:flex;gap:6px}
-.pill{padding:7px 14px;border-radius:999px;border:1px solid var(--border);
-  background:var(--bg-card);color:var(--text-muted);font-family:inherit;
-  font-size:12.5px;font-weight:500;cursor:pointer;transition:all var(--t-fast);white-space:nowrap}
-.pill:hover{border-color:var(--border-hover);color:var(--text-primary)}
-.pill.active{background:var(--green-glow);border-color:var(--border-accent);color:var(--green)}
+/* ── Sidebar ── */
+.sidebar{
+  width:200px;flex-shrink:0;
+  background:var(--bg1);
+  border-right:1px solid var(--border1);
+  display:flex;flex-direction:column;
+  height:100vh;
+}
 
-.machine-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
-  gap:14px;padding:16px 28px 32px}
+.sidebar-top{
+  padding:14px 16px 12px;
+  border-bottom:1px solid var(--border1);
+}
+.sidebar-brand{
+  display:flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:12px;
+  font-weight:700;color:var(--g0);
+  letter-spacing:.06em;
+}
+.sidebar-brand-icon{
+  width:22px;height:22px;
+  border:1px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;
+}
+.sidebar-host{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);margin-top:4px;
+  letter-spacing:.04em;
+}
 
-.machine-card{background:var(--bg-card);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:20px;display:flex;flex-direction:column;
-  gap:14px;transition:all var(--t-smooth);animation:fadeUp .4s cubic-bezier(.16,1,.3,1) both;
-  position:relative;overflow:hidden}
-.machine-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(52,211,107,.15),transparent);
-  opacity:0;transition:opacity var(--t-smooth)}
-.machine-card:hover{border-color:var(--border-hover);transform:translateY(-3px);
-  box-shadow:var(--shadow-md),var(--shadow-glow)}
-.machine-card:hover::before{opacity:1}
-@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
-.machine-card.status-online{border-top:2px solid var(--online)}
-.machine-card.status-idle{border-top:2px solid var(--idle)}
-.machine-card.status-offline{border-top:2px solid rgba(248,113,113,.35)}
+.sidebar-nav{flex:1;padding:10px 0;overflow-y:auto}
 
-.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-.card-title{font-size:14.5px;font-weight:600;color:var(--text-primary);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.1px}
-.card-os{font-size:11.5px;color:var(--text-muted);margin-top:2px}
-.card-mac{font-family:'DM Mono',monospace;font-size:10.5px;color:var(--text-faint);
-  margin-top:1px;letter-spacing:.04em}
+.nav-group-label{
+  font-family:var(--mono);font-size:9px;
+  color:var(--fg4);letter-spacing:.1em;text-transform:uppercase;
+  padding:10px 16px 4px;
+}
 
-.status-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
-  border-radius:999px;font-size:11px;font-weight:600;flex-shrink:0;
-  white-space:nowrap;letter-spacing:.02em}
-.badge-online{background:var(--online-bg);color:var(--online);border:1px solid rgba(52,211,107,.2)}
-.badge-idle{background:var(--idle-bg);color:var(--idle);border:1px solid rgba(245,158,11,.2)}
-.badge-offline{background:var(--offline-bg);color:var(--offline);border:1px solid rgba(248,113,113,.2)}
-.status-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-.online-dot{background:var(--online);box-shadow:0 0 5px var(--online);animation:pulse 2s infinite}
-.idle-dot{background:var(--idle);box-shadow:0 0 5px var(--idle);animation:pulse 3s infinite}
-.offline-dot{background:var(--offline)}
+.nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:7px 16px;
+  color:var(--fg2);font-size:12px;
+  cursor:pointer;transition:all .12s;
+  border-left:2px solid transparent;
+  user-select:none;
+  font-family:var(--sans);font-weight:400;
+}
+.nav-item svg{width:13px;height:13px;flex-shrink:0;opacity:.7}
+.nav-item:hover{background:rgba(52,211,83,.05);color:var(--fg1)}
+.nav-item.active{
+  color:var(--g0);
+  border-left-color:var(--g0);
+  background:rgba(52,211,83,.07);
+}
+.nav-item.active svg{opacity:1}
 
-.card-metrics{display:flex;background:var(--bg-surface);border:1px solid var(--border);
-  border-radius:var(--r-sm);overflow:hidden}
-.metric{flex:1;display:flex;flex-direction:column;align-items:center;
-  padding:10px 8px;position:relative}
-.metric+.metric::before{content:'';position:absolute;left:0;top:20%;bottom:20%;
-  width:1px;background:var(--border)}
-.metric-val{font-family:'DM Mono',monospace;font-size:14px;font-weight:500;
-  color:var(--text-primary);letter-spacing:-.3px}
-.metric-lbl{font-size:10px;color:var(--text-muted);margin-top:2px;
-  text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+.sidebar-footer{
+  padding:12px 14px;
+  border-top:1px solid var(--border1);
+}
+.sidebar-user{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 8px;
+  border:1px solid var(--border1);
+  background:var(--bg2);
+  cursor:pointer;transition:border-color .15s;
+}
+.sidebar-user:hover{border-color:var(--border2)}
+.sidebar-avatar{
+  width:22px;height:22px;
+  background:var(--g3);
+  border:1px solid var(--border2);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:10px;
+  color:var(--g0);font-weight:700;flex-shrink:0;
+}
+.sidebar-uname{
+  flex:1;font-family:var(--mono);font-size:10.5px;
+  color:var(--fg1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sidebar-logout{
+  width:20px;height:20px;
+  background:transparent;border:none;
+  color:var(--fg3);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:color .15s;padding:0;flex-shrink:0;
+}
+.sidebar-logout:hover{color:var(--red)}
+.sidebar-logout svg{width:12px;height:12px}
 
-.card-last-seen{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-muted)}
+/* ── Main area ── */
+.main{
+  flex:1;display:flex;flex-direction:column;
+  overflow:hidden;
+}
 
-.card-actions{display:flex;gap:8px}
-.action-btn{flex:1;display:flex;align-items:center;justify-content:center;
-  gap:6px;padding:8px 10px;border-radius:var(--r-sm);border:1px solid transparent;
-  font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;
-  transition:all var(--t-fast);position:relative;overflow:hidden}
-.action-btn:active{transform:scale(.97)}
-.action-btn:disabled{opacity:.28;pointer-events:none}
-.btn-sleep{background:rgba(14,165,233,.1);border-color:rgba(14,165,233,.2);color:#38bdf8}
-.btn-sleep:hover{background:rgba(14,165,233,.18);border-color:rgba(14,165,233,.4);
-  box-shadow:0 4px 14px rgba(14,165,233,.2)}
-.btn-shutdown{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.2);color:var(--offline)}
-.btn-shutdown:hover{background:rgba(248,113,113,.16);border-color:rgba(248,113,113,.4);
-  box-shadow:0 4px 14px rgba(248,113,113,.2)}
-.action-btn.loading{opacity:.6;pointer-events:none}
+/* ── Topbar ── */
+.topbar{
+  display:flex;align-items:center;
+  padding:0 20px;height:40px;
+  border-bottom:1px solid var(--border1);
+  background:var(--bg1);flex-shrink:0;
+}
+.topbar-path{
+  font-family:var(--mono);font-size:10.5px;
+  color:var(--fg3);flex:1;letter-spacing:.03em;
+}
+.topbar-path span{color:var(--fg2)}
+.topbar-path .current{color:var(--g0)}
+.topbar-right{display:flex;align-items:center;gap:8px}
 
-.empty-state{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;padding:60px 20px;text-align:center;color:var(--text-muted)}
-.empty-state-icon{width:48px;height:48px;background:var(--bg-elevated);
-  border:1px solid var(--border);border-radius:var(--r-lg);
-  display:flex;align-items:center;justify-content:center;margin-bottom:16px}
-.empty-state h3{font-size:14px;font-weight:500;color:var(--text-secondary);margin-bottom:4px}
-.empty-state p{font-size:12.5px;color:var(--text-muted)}
+.live-badge{
+  display:flex;align-items:center;gap:5px;
+  padding:3px 10px;
+  border:1px solid var(--border1);
+  background:var(--bg2);
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg2);letter-spacing:.04em;
+}
+.live-dot{
+  width:5px;height:5px;border-radius:50%;
+  background:var(--g0);
+  animation:blink 2s ease-in-out infinite;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 
-.skeleton-card{background:var(--bg-card);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:20px;height:220px;position:relative;overflow:hidden}
-.skeleton-card::after{content:'';position:absolute;inset:0;
-  background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.03) 50%,transparent 100%);
-  animation:shimmer 1.5s ease-in-out infinite}
-@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.topbar-btn{
+  width:26px;height:26px;
+  border:1px solid var(--border1);
+  background:transparent;
+  color:var(--fg2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .12s;
+}
+.topbar-btn:hover{border-color:var(--border2);color:var(--g0);background:rgba(52,211,83,.06)}
+.topbar-btn svg{width:12px;height:12px}
+.topbar-btn.spinning svg{animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-#toast-container{position:fixed;bottom:24px;right:24px;z-index:9999;
-  display:flex;flex-direction:column;gap:8px;pointer-events:none}
-.toast{display:flex;align-items:center;gap:10px;padding:12px 16px;
-  border-radius:var(--r-md);font-size:13px;font-weight:450;max-width:340px;
-  backdrop-filter:blur(12px);pointer-events:all;
-  animation:toastIn .3s cubic-bezier(.16,1,.3,1) both;box-shadow:var(--shadow-lg)}
-.toast-ok{background:rgba(13,26,18,.95);border:1px solid rgba(52,211,107,.3);color:#7ee8a2}
-.toast-err{background:rgba(26,13,13,.95);border:1px solid rgba(248,113,113,.3);color:#fca5a5}
-@keyframes toastIn{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
-@keyframes toastOut{to{opacity:0;transform:translateY(6px) scale(.96)}}
+/* ── Page content ── */
+.page{display:none;flex:1;overflow-y:auto;flex-direction:column}
+.page.active{display:flex}
+
+/* custom scrollbar */
+.page::-webkit-scrollbar{width:4px}
+.page::-webkit-scrollbar-track{background:transparent}
+.page::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:0}
+
+/* ══════════════════════════════
+   OVERVIEW PAGE
+   ══════════════════════════════ */
+.overview-content{padding:20px 24px}
+
+/* stat strip */
+.stat-strip{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:1px;
+  background:var(--border0);
+  border:1px solid var(--border1);
+  margin-bottom:20px;
+}
+.stat-cell{
+  padding:14px 16px;
+  background:var(--bg1);
+  position:relative;
+}
+.stat-cell::after{
+  content:'';position:absolute;
+  bottom:0;left:0;height:1px;
+  width:0%;background:var(--g0);
+  transition:width .8s cubic-bezier(.4,0,.2,1);
+}
+.stat-cell.has-bar::after{width:var(--bar-w,0%)}
+.stat-key{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);letter-spacing:.07em;text-transform:uppercase;
+  margin-bottom:8px;
+}
+.stat-val{
+  font-family:var(--mono);font-size:22px;
+  font-weight:700;color:var(--fg0);
+  letter-spacing:-.5px;line-height:1;
+}
+.stat-val.c-online{color:var(--status-online)}
+.stat-val.c-idle{color:var(--status-idle)}
+.stat-val.c-offline{color:var(--status-offline)}
+.stat-sub{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);margin-top:5px;
+}
+
+/* machine table */
+.section-head{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:12px;
+}
+.section-title{
+  font-family:var(--mono);font-size:10.5px;
+  color:var(--fg2);letter-spacing:.07em;text-transform:uppercase;
+}
+.section-count{
+  font-family:var(--mono);font-size:10px;
+  color:var(--fg4);
+}
+
+.controls{display:flex;gap:8px;margin-bottom:14px;align-items:center}
+.search-box{
+  flex:1;display:flex;align-items:center;
+  border:1px solid var(--border1);
+  background:var(--bg2);
+  transition:border-color .15s;
+  max-width:320px;
+}
+.search-box:focus-within{border-color:var(--border2)}
+.search-pfx{
+  font-family:var(--mono);font-size:11px;
+  color:var(--fg3);padding:0 6px 0 10px;flex-shrink:0;
+}
+.search-box input{
+  flex:1;padding:7px 8px 7px 0;
+  background:transparent;border:none;
+  color:var(--fg0);font-family:var(--mono);font-size:11px;
+  outline:none;
+}
+.search-box input::placeholder{color:var(--fg4)}
+
+.filter-btns{display:flex;gap:1px}
+.filter-btn{
+  padding:6px 12px;
+  border:1px solid var(--border1);
+  background:var(--bg2);
+  color:var(--fg2);font-family:var(--mono);font-size:10px;
+  cursor:pointer;transition:all .12s;letter-spacing:.04em;
+  border-radius:0;
+}
+.filter-btn:hover{background:var(--bg3);color:var(--fg1)}
+.filter-btn.active{
+  background:rgba(52,211,83,.1);
+  border-color:var(--border2);
+  color:var(--g0);
+}
+
+/* Machine table */
+.machine-table{width:100%;border-collapse:collapse;border-spacing:0}
+.machine-table th{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);letter-spacing:.07em;text-transform:uppercase;
+  padding:8px 12px;text-align:left;
+  border-bottom:1px solid var(--border1);
+  background:var(--bg2);font-weight:400;
+}
+.machine-table td{
+  padding:10px 12px;
+  border-bottom:1px solid var(--border0);
+  font-size:12px;vertical-align:middle;
+}
+.machine-table tr:hover td{background:rgba(52,211,83,.025)}
+.machine-table tr:last-child td{border-bottom:none}
+
+.cell-host{
+  font-family:var(--mono);font-size:11.5px;
+  color:var(--fg0);font-weight:500;
+}
+.cell-sub{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);margin-top:2px;letter-spacing:.03em;
+}
+.cell-mono{font-family:var(--mono);font-size:11px;color:var(--fg1)}
+.cell-dim{font-family:var(--mono);font-size:11px;color:var(--fg2)}
+
+/* status badge */
+.badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;
+  font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.06em;font-weight:500;
+  border-radius:0;
+}
+.badge-online{
+  color:var(--status-online);
+  background:rgba(52,211,83,.08);
+  border:1px solid rgba(52,211,83,.2);
+}
+.badge-idle{
+  color:var(--status-idle);
+  background:rgba(200,168,60,.08);
+  border:1px solid rgba(200,168,60,.2);
+}
+.badge-offline{
+  color:var(--status-offline);
+  background:rgba(212,68,68,.08);
+  border:1px solid rgba(212,68,68,.2);
+}
+.badge-dot{width:4px;height:4px;border-radius:50%;flex-shrink:0}
+.badge-online .badge-dot{background:var(--status-online);animation:blink 2s infinite}
+.badge-idle .badge-dot{background:var(--status-idle);animation:blink 3s infinite}
+.badge-offline .badge-dot{background:var(--status-offline)}
+
+/* action buttons */
+.act-btn{
+  padding:4px 10px;
+  border:1px solid var(--border1);
+  background:transparent;
+  color:var(--fg2);font-family:var(--mono);font-size:10px;
+  cursor:pointer;transition:all .12s;letter-spacing:.04em;
+  margin-right:4px;
+}
+.act-btn:hover{background:var(--bg3);border-color:var(--border2);color:var(--fg0)}
+.act-btn.cmd-sleep:hover{color:var(--cyan);border-color:rgba(58,172,204,.3)}
+.act-btn.cmd-shutdown:hover{color:var(--red);border-color:rgba(212,68,68,.3)}
+.act-btn:disabled{opacity:.25;pointer-events:none}
+
+/* empty state */
+.empty-state{
+  padding:48px 24px;text-align:center;
+  font-family:var(--mono);color:var(--fg3);font-size:11px;
+  grid-column:1/-1;
+}
+.empty-state-ascii{
+  font-size:10px;color:var(--fg4);
+  white-space:pre;line-height:1.4;
+  margin-bottom:12px;
+}
+
+/* skeleton rows */
+.skel-row td{padding:12px}
+.skel-bar{
+  height:10px;background:var(--bg3);
+  animation:shimmer 1.5s ease-in-out infinite;
+  border-radius:0;
+}
+@keyframes shimmer{
+  0%{opacity:.5}50%{opacity:.8}100%{opacity:.5}
+}
+
+/* ══════════════════════════════
+   ENERGY PAGE
+   ══════════════════════════════ */
+.energy-content{padding:20px 24px}
+
+.energy-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:1px;background:var(--border0);
+  border:1px solid var(--border1);
+  margin-bottom:20px;
+}
+.energy-card{
+  background:var(--bg1);
+  padding:16px 20px;
+}
+.energy-card-label{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);text-transform:uppercase;
+  letter-spacing:.08em;margin-bottom:10px;
+}
+.energy-card-val{
+  font-family:var(--mono);font-size:28px;
+  font-weight:700;color:var(--g0);
+  letter-spacing:-1px;line-height:1;
+}
+.energy-card-unit{
+  font-family:var(--mono);font-size:11px;
+  color:var(--fg2);margin-top:4px;
+}
+.energy-card-sub{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);margin-top:8px;
+  padding-top:8px;border-top:1px solid var(--border0);
+}
+
+.energy-formula{
+  border:1px solid var(--border1);
+  background:var(--bg2);
+  padding:16px 20px;
+  margin-bottom:20px;
+}
+.energy-formula-title{
+  font-family:var(--mono);font-size:9.5px;
+  color:var(--fg3);letter-spacing:.07em;text-transform:uppercase;
+  margin-bottom:12px;
+}
+.formula-line{
+  font-family:var(--mono);font-size:11.5px;
+  color:var(--fg1);padding:3px 0;
+}
+.formula-line .kw{color:var(--cyan)}
+.formula-line .val{color:var(--g0)}
+.formula-line .comment{color:var(--fg4);font-size:10px}
+
+/* per-machine energy table */
+.energy-table-wrap{border:1px solid var(--border1);overflow:hidden}
+
+/* ══════════════════════════════
+   SETTINGS PAGE
+   ══════════════════════════════ */
+.settings-content{padding:20px 24px}
+
+.settings-notice{
+  padding:10px 14px;margin-bottom:20px;
+  border:1px solid rgba(58,172,204,.2);
+  background:rgba(58,172,204,.05);
+  font-family:var(--mono);font-size:10.5px;
+  color:var(--cyan);letter-spacing:.03em;
+}
+.settings-notice::before{content:'// '}
+
+.settings-section{
+  border:1px solid var(--border1);
+  margin-bottom:16px;overflow:hidden;
+}
+.settings-section-head{
+  padding:10px 16px;
+  background:var(--bg2);
+  border-bottom:1px solid var(--border1);
+  display:flex;align-items:center;gap:8px;
+}
+.settings-section-title{
+  font-family:var(--mono);font-size:10px;
+  color:var(--fg2);text-transform:uppercase;letter-spacing:.08em;
+  font-weight:500;
+}
+.settings-section-icon{
+  width:14px;height:14px;color:var(--fg3);flex-shrink:0;
+}
+.settings-body{background:var(--bg1)}
+
+.settings-row{
+  display:grid;
+  grid-template-columns:260px 1fr auto;
+  align-items:center;
+  padding:11px 16px;
+  border-bottom:1px solid var(--border0);
+  gap:16px;
+}
+.settings-row:last-child{border-bottom:none}
+.settings-row:hover{background:rgba(52,211,83,.02)}
+
+.settings-key{
+  font-family:var(--mono);font-size:11px;
+  color:var(--fg1);
+}
+.settings-desc{
+  font-size:10.5px;color:var(--fg3);
+  margin-top:2px;font-family:var(--sans);
+}
+
+.settings-input{
+  padding:6px 10px;
+  background:var(--bg2);
+  border:1px solid var(--border1);
+  color:var(--fg0);font-family:var(--mono);font-size:11px;
+  outline:none;width:160px;
+  transition:border-color .15s;
+  border-radius:0;
+}
+.settings-input:focus{border-color:var(--border3)}
+.settings-input.wide{width:220px}
+
+.settings-select{
+  padding:6px 10px;
+  background:var(--bg2);
+  border:1px solid var(--border1);
+  color:var(--fg0);font-family:var(--mono);font-size:11px;
+  outline:none;
+  transition:border-color .15s;
+  border-radius:0;cursor:pointer;
+  -webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236a8f6d' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:calc(100% - 8px) center;
+  padding-right:26px;
+}
+.settings-select:focus{border-color:var(--border3)}
+
+.settings-unit{
+  font-family:var(--mono);font-size:10px;
+  color:var(--fg3);
+}
+
+.settings-actions{
+  padding:16px;
+  border-top:1px solid var(--border1);
+  display:flex;align-items:center;gap:10px;
+  background:var(--bg2);
+}
+.settings-save-btn{
+  padding:8px 20px;
+  background:transparent;
+  border:1px solid var(--border2);
+  color:var(--g0);font-family:var(--mono);font-size:11px;
+  cursor:pointer;letter-spacing:.05em;
+  transition:all .15s;
+}
+.settings-save-btn:hover{background:rgba(52,211,83,.1);border-color:var(--border3)}
+.settings-save-btn:disabled{opacity:.4;pointer-events:none}
+.settings-status{
+  font-family:var(--mono);font-size:10px;
+  color:var(--fg3);
+}
+.settings-status.ok{color:var(--g0)}
+.settings-status.err{color:var(--red)}
+
+/* password section in settings */
+.pw-change-form{padding:16px}
+.pw-row{margin-bottom:12px}
+.pw-label{
+  font-family:var(--mono);font-size:10px;
+  color:var(--fg2);text-transform:uppercase;letter-spacing:.06em;
+  margin-bottom:5px;
+}
+.pw-input{
+  width:280px;padding:7px 10px;
+  background:var(--bg2);
+  border:1px solid var(--border1);
+  color:var(--fg0);font-family:var(--mono);font-size:11px;
+  outline:none;
+  transition:border-color .15s;
+  border-radius:0;
+}
+.pw-input:focus{border-color:var(--border3)}
+.pw-error{
+  font-family:var(--mono);font-size:10.5px;
+  color:var(--red);margin-top:8px;
+}
+.pw-error::before{content:'[ERR] '}
+
+/* ══════════════════════════════
+   TOAST
+   ══════════════════════════════ */
+#toast-container{
+  position:fixed;bottom:20px;right:20px;
+  z-index:10000;display:flex;flex-direction:column;gap:6px;
+  pointer-events:none;
+}
+.toast{
+  padding:9px 14px;
+  font-family:var(--mono);font-size:11px;
+  letter-spacing:.03em;pointer-events:all;
+  animation:toastIn .2s ease both;
+}
+.toast-ok{
+  background:rgba(14,20,16,.97);
+  border:1px solid rgba(52,211,83,.3);
+  color:#7ee8a2;
+}
+.toast-err{
+  background:rgba(20,12,12,.97);
+  border:1px solid rgba(212,68,68,.3);
+  color:#e89090;
+}
+.toast-info{
+  background:rgba(12,16,22,.97);
+  border:1px solid rgba(58,172,204,.3);
+  color:#80ccdd;
+}
+@keyframes toastIn{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
 .toast-leaving{animation:toastOut .2s ease forwards}
-
-*{scrollbar-width:thin;scrollbar-color:var(--bg-elevated) transparent}
-*::-webkit-scrollbar{width:5px}
-*::-webkit-scrollbar-thumb{background:var(--bg-elevated);border-radius:99px}
-
-@media(max-width:1100px){.stats-row{flex-wrap:wrap}.stat-card{min-width:calc(50% - 7px)}}
-@media(max-width:768px){.sidebar{display:none}.stats-row{flex-direction:column;padding:16px 16px 0}
-  .controls-row{padding:12px 16px 0;flex-direction:column;align-items:stretch}
-  .machine-grid{padding:12px 16px 24px}.topbar{padding:14px 16px}}
-
-/* SVG icon inline shim — used for field icons and nav without lucide */
-.icon{display:inline-flex;align-items:center;justify-content:center;
-  width:15px;height:15px;color:inherit;vertical-align:middle}
+@keyframes toastOut{to{opacity:0;transform:translateX(10px)}}
 </style>
 </head>
 <body>
 <div id="app">
 
-<!-- ── LOGIN ── -->
+<!-- ══════════ LOGIN ══════════ -->
 <div id="login-screen" class="screen active">
-  <div class="login-bg">
-    <div class="login-orb login-orb-1"></div>
-    <div class="login-orb login-orb-2"></div>
-    <div class="login-grid"></div>
-  </div>
-  <div class="auth-wrap">
-    <div class="auth-card">
-      <div class="auth-logo">
-        <div class="logo-mark">
-          <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-            <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" fill="currentColor" opacity=".15"/>
-            <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M10 6L14 8.5V13.5L10 16L6 13.5V8.5L10 6Z" fill="currentColor" opacity=".4"/>
-          </svg>
-        </div>
-        <span>GreenOps</span>
+  <canvas id="matrix-canvas"></canvas>
+  <div class="login-box">
+    <div class="login-header">
+      <div class="login-header-dots">
+        <div class="login-dot r"></div>
+        <div class="login-dot y"></div>
+        <div class="login-dot g"></div>
       </div>
-      <h1 class="auth-title">Welcome back</h1>
-      <p class="auth-sub">Sign in to your infrastructure dashboard</p>
-      <form id="login-form" autocomplete="off">
-        <div class="field-group">
-          <label class="field-label">Username</label>
-          <div class="field-wrap">
-            <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      <div class="login-title-bar">greenops@localhost:~</div>
+    </div>
+    <div class="login-body">
+      <div class="login-prompt">sudo greenops-auth --authenticate</div>
+      <form id="login-form">
+        <div class="login-field">
+          <label class="login-label">username</label>
+          <div class="login-input-wrap">
+            <span class="login-prompt-char">›</span>
             <input id="username" type="text" placeholder="admin" autocomplete="username" required/>
           </div>
         </div>
-        <div class="field-group">
-          <label class="field-label">Password</label>
-          <div class="field-wrap">
-            <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <div class="login-field">
+          <label class="login-label">password</label>
+          <div class="login-input-wrap">
+            <span class="login-prompt-char">›</span>
             <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" required/>
           </div>
         </div>
-        <div id="login-error" class="form-error hidden">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          <span id="login-error-text"></span>
-        </div>
-        <button type="submit" class="btn-submit" id="login-btn">
-          <span class="btn-text">Sign In</span>
-          <span class="btn-spinner hidden">
-            <svg class="spin" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="30" stroke-dashoffset="10"/></svg>
-          </span>
-          <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-        </button>
+        <div id="login-error" class="login-error hidden"></div>
+        <button type="submit" id="login-btn" class="login-btn">authenticate →</button>
       </form>
-      <p class="auth-footer">GreenOps v2.0 &mdash; Green IT Monitoring</p>
     </div>
+    <div class="login-footer">GreenOps v2.0 — Green IT Infrastructure Monitor</div>
   </div>
 </div>
 
-<!-- ── CHANGE PASSWORD ── -->
+<!-- ══════════ CHANGE PW ══════════ -->
 <div id="change-pw-screen" class="screen">
-  <div class="login-bg">
-    <div class="login-orb login-orb-1"></div>
-    <div class="login-orb login-orb-2"></div>
-  </div>
-  <div class="auth-wrap">
-    <div class="auth-card">
-      <div class="auth-logo">
-        <div class="logo-mark">
-          <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-            <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" fill="currentColor" opacity=".15"/>
-            <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M10 6L14 8.5V13.5L10 16L6 13.5V8.5L10 6Z" fill="currentColor" opacity=".4"/>
-          </svg>
-        </div>
-        <span>GreenOps</span>
+  <div class="changepw-box">
+    <div class="login-header">
+      <div class="login-header-dots">
+        <div class="login-dot r"></div>
+        <div class="login-dot y"></div>
+        <div class="login-dot g"></div>
       </div>
-      <div class="pw-badge">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Security Update Required
-      </div>
-      <h1 class="auth-title">Set new password</h1>
-      <p class="auth-sub">Your account requires a password change before continuing.</p>
+      <div class="login-title-bar">greenops — password update required</div>
+    </div>
+    <div class="changepw-warn">password change required before proceeding</div>
+    <div class="login-body">
       <form id="change-pw-form">
-        <div class="field-group">
-          <label class="field-label">Current Password</label>
-          <div class="field-wrap">
-            <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <input id="cur-pw" type="password" placeholder="Current password" required/>
+        <div class="login-field">
+          <label class="login-label">current password</label>
+          <div class="login-input-wrap">
+            <span class="login-prompt-char">›</span>
+            <input id="cur-pw" type="password" required/>
           </div>
         </div>
-        <div class="field-group">
-          <label class="field-label">New Password</label>
-          <div class="field-wrap">
-            <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-            <input id="new-pw" type="password" placeholder="Min. 8 characters" required/>
+        <div class="login-field">
+          <label class="login-label">new password (min 8 chars)</label>
+          <div class="login-input-wrap">
+            <span class="login-prompt-char">›</span>
+            <input id="new-pw" type="password" required/>
           </div>
         </div>
-        <div class="field-group">
-          <label class="field-label">Confirm New Password</label>
-          <div class="field-wrap">
-            <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="20 6 9 17 4 12"/></svg>
-            <input id="confirm-pw" type="password" placeholder="Repeat new password" required/>
+        <div class="login-field">
+          <label class="login-label">confirm new password</label>
+          <div class="login-input-wrap">
+            <span class="login-prompt-char">›</span>
+            <input id="confirm-pw" type="password" required/>
           </div>
         </div>
-        <div id="change-pw-error" class="form-error hidden">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          <span id="change-pw-error-text"></span>
-        </div>
-        <button type="submit" class="btn-submit">
-          <span class="btn-text">Update Password</span>
-          <span class="btn-spinner hidden">
-            <svg class="spin" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="30" stroke-dashoffset="10"/></svg>
-          </span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-        </button>
+        <div id="change-pw-error" class="login-error hidden"></div>
+        <button type="submit" class="login-btn">update password →</button>
       </form>
     </div>
   </div>
 </div>
 
-<!-- ── DASHBOARD ── -->
+<!-- ══════════ DASHBOARD ══════════ -->
 <div id="dashboard-screen" class="screen">
+
+  <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="sidebar-header">
-      <div class="sidebar-logo">
-        <div class="logo-mark">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" fill="currentColor" opacity=".15"/>
-            <path d="M10 2L18 7V13L10 18L2 13V7L10 2Z" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M10 6L14 8.5V13.5L10 16L6 13.5V8.5L10 6Z" fill="currentColor" opacity=".4"/>
+    <div class="sidebar-top">
+      <div class="sidebar-brand">
+        <div class="sidebar-brand-icon">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M6 1L11 3.5V8.5L6 11L1 8.5V3.5L6 1Z" stroke="#34d353" stroke-width="1"/>
+            <path d="M6 4L8.5 5.5V8.5L6 10L3.5 8.5V5.5L6 4Z" fill="#34d353" opacity=".4"/>
           </svg>
         </div>
-        <span>GreenOps</span>
+        GREENOPS
       </div>
+      <div class="sidebar-host" id="sidebar-orgname">infrastructure monitor</div>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-section-label">Monitoring</div>
-      <a class="nav-item active" href="#">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Dashboard
-      </a>
-      <a class="nav-item" href="#">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <div class="nav-group-label">monitor</div>
+      <div class="nav-item active" data-page="overview">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="1" y="1" width="6" height="6"/><rect x="9" y="1" width="6" height="6"/>
+          <rect x="1" y="9" width="6" height="6"/><rect x="9" y="9" width="6" height="6"/>
+        </svg>
+        Overview
+      </div>
+      <div class="nav-item" data-page="machines">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="1" y="2" width="14" height="9" rx="1"/>
+          <line x1="5" y1="14" x2="11" y2="14"/>
+          <line x1="8" y1="11" x2="8" y2="14"/>
+        </svg>
         Machines
-      </a>
-      <a class="nav-item" href="#">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      </div>
+      <div class="nav-item" data-page="energy">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 1L3 9h5l-1 6 6-8H8l1-6z"/>
+        </svg>
         Energy
-      </a>
-      <div class="nav-section-label" style="margin-top:20px">System</div>
-      <a class="nav-item" href="#">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+      </div>
+      <div class="nav-group-label" style="margin-top:8px">system</div>
+      <div class="nav-item" data-page="settings">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="8" cy="8" r="2.5"/>
+          <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/>
+        </svg>
         Settings
-      </a>
+      </div>
     </nav>
     <div class="sidebar-footer">
-      <div class="sidebar-user-row">
-        <div class="user-avatar"><span id="sidebar-user-initial">A</span></div>
-        <div class="user-info">
-          <div class="user-name" id="sidebar-user">admin</div>
-          <div class="user-role">Administrator</div>
-        </div>
-        <button id="logout-btn" class="logout-btn" title="Sign out">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <div class="sidebar-user">
+        <div class="sidebar-avatar" id="sidebar-initial">A</div>
+        <div class="sidebar-uname" id="sidebar-username">admin</div>
+        <button class="sidebar-logout" id="logout-btn" title="Sign out">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M6 14H2V2h4M10 11l4-3-4-3M14 8H6"/>
+          </svg>
         </button>
       </div>
     </div>
   </aside>
 
-  <main class="main-content">
-    <header class="topbar">
-      <div>
-        <h1 class="page-title">Infrastructure Overview</h1>
-        <div class="breadcrumb">
-          <span>GreenOps</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:.4"><polyline points="9 18 15 12 9 6"/></svg>
-          <span class="breadcrumb-current">Dashboard</span>
-        </div>
+  <!-- Main -->
+  <div class="main">
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-path">
+        <span>greenops</span>/<span id="topbar-page" class="current">overview</span>
       </div>
       <div class="topbar-right">
-        <div class="refresh-status">
-          <span class="refresh-dot"></span>
-          <span>Live</span>
-        </div>
-        <button id="refresh-btn" class="btn-icon-only" title="Refresh now">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+        <button class="topbar-btn" id="refresh-btn" title="Refresh">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M13.5 8A5.5 5.5 0 1 1 10 2.5"/>
+            <path d="M14 1v4h-4"/>
+          </svg>
         </button>
-      </div>
-    </header>
-
-    <section class="stats-row">
-      <div class="stat-card">
-        <div class="stat-card-inner">
-          <div class="stat-icon-wrap stat-icon-neutral">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-          </div>
-          <div class="stat-data">
-            <div class="stat-value" id="stat-total">—</div>
-            <div class="stat-label">Total Machines</div>
-          </div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-inner">
-          <div class="stat-icon-wrap stat-icon-online">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
-          </div>
-          <div class="stat-data">
-            <div class="stat-value stat-online" id="stat-online">—</div>
-            <div class="stat-label">Online</div>
-          </div>
-        </div>
-        <div class="stat-bar stat-bar-online" id="bar-online" style="width:0%"></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-inner">
-          <div class="stat-icon-wrap stat-icon-idle">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
-          </div>
-          <div class="stat-data">
-            <div class="stat-value stat-idle" id="stat-idle">—</div>
-            <div class="stat-label">Idle</div>
-          </div>
-        </div>
-        <div class="stat-bar stat-bar-idle" id="bar-idle" style="width:0%"></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-inner">
-          <div class="stat-icon-wrap stat-icon-offline">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
-          </div>
-          <div class="stat-data">
-            <div class="stat-value stat-offline" id="stat-offline">—</div>
-            <div class="stat-label">Offline</div>
-          </div>
-        </div>
-        <div class="stat-bar stat-bar-offline" id="bar-offline" style="width:0%"></div>
-      </div>
-      <div class="stat-card stat-card-energy">
-        <div class="stat-card-inner">
-          <div class="stat-icon-wrap stat-icon-energy">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          </div>
-          <div class="stat-data">
-            <div class="stat-value" id="stat-energy">—</div>
-            <div class="stat-label">Energy Wasted</div>
-          </div>
-        </div>
-        <div class="stat-sub" id="stat-cost">— cost</div>
-      </div>
-    </section>
-
-    <div class="controls-row">
-      <div class="search-wrap">
-        <svg class="search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="search-input" type="text" placeholder="Search machines, OS, MAC address…" class="search-input"/>
-      </div>
-      <div class="filter-pills">
-        <button class="pill active" data-status="">All</button>
-        <button class="pill" data-status="online">Online</button>
-        <button class="pill" data-status="idle">Idle</button>
-        <button class="pill" data-status="offline">Offline</button>
       </div>
     </div>
 
-    <section id="machine-grid" class="machine-grid"></section>
-  </main>
-</div>
-</div>
+    <!-- ── OVERVIEW PAGE ── -->
+    <div class="page active" id="page-overview">
+      <div class="overview-content">
+        <div class="stat-strip">
+          <div class="stat-cell">
+            <div class="stat-key">total machines</div>
+            <div class="stat-val" id="stat-total">—</div>
+          </div>
+          <div class="stat-cell has-bar" id="bar-online-cell">
+            <div class="stat-key">online</div>
+            <div class="stat-val c-online" id="stat-online">—</div>
+          </div>
+          <div class="stat-cell has-bar" id="bar-idle-cell">
+            <div class="stat-key">idle</div>
+            <div class="stat-val c-idle" id="stat-idle">—</div>
+          </div>
+          <div class="stat-cell has-bar" id="bar-offline-cell">
+            <div class="stat-key">offline</div>
+            <div class="stat-val c-offline" id="stat-offline">—</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-key">energy wasted</div>
+            <div class="stat-val" id="stat-energy" style="font-size:16px;margin-top:3px">—</div>
+            <div class="stat-sub" id="stat-cost">— cost</div>
+          </div>
+        </div>
+
+        <div class="section-head">
+          <div class="section-title">machine fleet</div>
+          <div class="section-count" id="machine-count">0 machines</div>
+        </div>
+        <div class="controls">
+          <div class="search-box">
+            <span class="search-pfx">grep</span>
+            <input id="search-input" type="text" placeholder="hostname, os, mac..."/>
+          </div>
+          <div class="filter-btns">
+            <button class="filter-btn active" data-status="">all</button>
+            <button class="filter-btn" data-status="online">online</button>
+            <button class="filter-btn" data-status="idle">idle</button>
+            <button class="filter-btn" data-status="offline">offline</button>
+          </div>
+        </div>
+        <div id="machine-table-wrap">
+          <!-- table rendered by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MACHINES PAGE ── -->
+    <div class="page" id="page-machines">
+      <div class="overview-content">
+        <div class="section-head">
+          <div class="section-title">machine registry</div>
+          <div class="section-count" id="machines-page-count">—</div>
+        </div>
+        <p style="font-family:var(--mono);font-size:10.5px;color:var(--fg3);margin-bottom:16px;">
+          // full machine list with heartbeat history and remote command interface
+        </p>
+        <div id="machines-page-table-wrap">
+          <!-- detailed machine table -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ENERGY PAGE ── -->
+    <div class="page" id="page-energy">
+      <div class="energy-content">
+        <div class="section-title" style="margin-bottom:16px">energy consumption analysis</div>
+
+        <div class="energy-grid">
+          <div class="energy-card">
+            <div class="energy-card-label">total energy wasted</div>
+            <div class="energy-card-val" id="e-kwh">0.000</div>
+            <div class="energy-card-unit">kilowatt-hours</div>
+            <div class="energy-card-sub" id="e-co2">CO₂: 0.000 kg equivalent</div>
+          </div>
+          <div class="energy-card">
+            <div class="energy-card-label">estimated cost</div>
+            <div class="energy-card-val" id="e-cost">$0.00</div>
+            <div class="energy-card-unit" id="e-rate">@ $0.12 / kWh</div>
+            <div class="energy-card-sub" id="e-machines">across 0 machines</div>
+          </div>
+          <div class="energy-card">
+            <div class="energy-card-label">avg idle per machine</div>
+            <div class="energy-card-val" id="e-avg-idle">0%</div>
+            <div class="energy-card-unit">idle time ratio</div>
+            <div class="energy-card-sub" id="e-idle-total">total idle: 0h 0m</div>
+          </div>
+        </div>
+
+        <div class="energy-formula">
+          <div class="energy-formula-title">// power model — calculation reference</div>
+          <div class="formula-line"><span class="kw">idle_hours</span>   = idle_seconds / <span class="val">3600</span></div>
+          <div class="formula-line"><span class="kw">energy_kWh</span>   = idle_hours × (idle_power_W / <span class="val">1000</span>) <span class="comment">// default 65W per machine</span></div>
+          <div class="formula-line"><span class="kw">cost_USD</span>     = energy_kWh × electricity_rate <span class="comment">// configurable in Settings</span></div>
+          <div class="formula-line"><span class="kw">CO₂_kg</span>      = energy_kWh × <span class="val">0.42</span> <span class="comment">// US EPA 2023 average grid factor</span></div>
+        </div>
+
+        <div class="section-head" style="margin-bottom:10px">
+          <div class="section-title">per-machine breakdown</div>
+        </div>
+        <div class="energy-table-wrap">
+          <div id="energy-table-inner"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SETTINGS PAGE ── -->
+    <div class="page" id="page-settings">
+      <div class="settings-content">
+        <div class="settings-notice">
+          Settings are persisted to the database. Changes take effect immediately on next calculation cycle.
+        </div>
+
+        <!-- Energy Config -->
+        <div class="settings-section">
+          <div class="settings-section-head">
+            <svg class="settings-section-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M7 1L3 7h3l-1 6 5-7H8l1-6z"/>
+            </svg>
+            <div class="settings-section-title">energy configuration</div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">ELECTRICITY_COST_PER_KWH</div>
+                <div class="settings-desc">Local electricity rate used for cost calculations</div>
+              </div>
+              <input class="settings-input" id="s-electricity-cost" type="number" step="0.001" min="0" placeholder="0.12"/>
+              <span class="settings-unit">USD/kWh</span>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">IDLE_POWER_WATTS</div>
+                <div class="settings-desc">Assumed idle power draw per machine</div>
+              </div>
+              <input class="settings-input" id="s-idle-power" type="number" step="1" min="1" placeholder="65"/>
+              <span class="settings-unit">watts</span>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">CURRENCY</div>
+                <div class="settings-desc">Display currency for cost calculations</div>
+              </div>
+              <select class="settings-select" id="s-currency">
+                <option value="USD">USD — US Dollar</option>
+                <option value="EUR">EUR — Euro</option>
+                <option value="GBP">GBP — British Pound</option>
+                <option value="INR">INR — Indian Rupee</option>
+                <option value="JPY">JPY — Japanese Yen</option>
+                <option value="CAD">CAD — Canadian Dollar</option>
+                <option value="AUD">AUD — Australian Dollar</option>
+              </select>
+              <span class="settings-unit"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Machine Thresholds -->
+        <div class="settings-section">
+          <div class="settings-section-head">
+            <svg class="settings-section-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+              <circle cx="7" cy="7" r="6"/><path d="M7 4v4l2.5 1.5"/>
+            </svg>
+            <div class="settings-section-title">machine thresholds</div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">IDLE_THRESHOLD_SECONDS</div>
+                <div class="settings-desc">Seconds of inactivity before marking machine as idle</div>
+              </div>
+              <input class="settings-input" id="s-idle-threshold" type="number" step="10" min="30" placeholder="300"/>
+              <span class="settings-unit">seconds</span>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">HEARTBEAT_TIMEOUT_SECONDS</div>
+                <div class="settings-desc">Seconds without heartbeat before marking machine offline</div>
+              </div>
+              <input class="settings-input" id="s-heartbeat-timeout" type="number" step="10" min="30" placeholder="180"/>
+              <span class="settings-unit">seconds</span>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">AGENT_HEARTBEAT_INTERVAL</div>
+                <div class="settings-desc">Recommended interval agents should send heartbeats (informational)</div>
+              </div>
+              <input class="settings-input" id="s-heartbeat-interval" type="number" step="5" min="10" placeholder="60"/>
+              <span class="settings-unit">seconds</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Organization -->
+        <div class="settings-section">
+          <div class="settings-section-head">
+            <svg class="settings-section-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="1" y="5" width="12" height="8" rx="1"/>
+              <path d="M5 5V3a2 2 0 014 0v2"/>
+            </svg>
+            <div class="settings-section-title">organization</div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">ORGANIZATION_NAME</div>
+                <div class="settings-desc">Display name shown in the dashboard header</div>
+              </div>
+              <input class="settings-input wide" id="s-org-name" type="text" placeholder="My Organization"/>
+              <span class="settings-unit"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- System -->
+        <div class="settings-section">
+          <div class="settings-section-head">
+            <svg class="settings-section-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="1" y="1" width="12" height="12" rx="1"/>
+              <path d="M4 7h6M4 5h6M4 9h3"/>
+            </svg>
+            <div class="settings-section-title">system</div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">LOG_LEVEL</div>
+                <div class="settings-desc">Server logging verbosity</div>
+              </div>
+              <select class="settings-select" id="s-log-level">
+                <option value="DEBUG">DEBUG</option>
+                <option value="INFO" selected>INFO</option>
+                <option value="WARNING">WARNING</option>
+                <option value="ERROR">ERROR</option>
+              </select>
+              <span class="settings-unit"></span>
+            </div>
+            <div class="settings-row">
+              <div>
+                <div class="settings-key">DASHBOARD_REFRESH_INTERVAL</div>
+                <div class="settings-desc">How often the dashboard auto-refreshes data</div>
+              </div>
+              <select class="settings-select" id="s-refresh-interval">
+                <option value="5000">5 seconds</option>
+                <option value="10000" selected>10 seconds</option>
+                <option value="30000">30 seconds</option>
+                <option value="60000">60 seconds</option>
+                <option value="0">manual only</option>
+              </select>
+              <span class="settings-unit"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Change Password -->
+        <div class="settings-section">
+          <div class="settings-section-head">
+            <svg class="settings-section-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3">
+              <rect x="3" y="6" width="8" height="7" rx="1"/>
+              <path d="M5 6V4a2 2 0 014 0v2"/>
+            </svg>
+            <div class="settings-section-title">change password</div>
+          </div>
+          <div class="pw-change-form">
+            <div class="pw-row">
+              <div class="pw-label">current password</div>
+              <input class="pw-input" id="pw-current" type="password" placeholder="current password"/>
+            </div>
+            <div class="pw-row">
+              <div class="pw-label">new password</div>
+              <input class="pw-input" id="pw-new" type="password" placeholder="min 8 characters"/>
+            </div>
+            <div class="pw-row">
+              <div class="pw-label">confirm new password</div>
+              <input class="pw-input" id="pw-confirm" type="password" placeholder="confirm new password"/>
+            </div>
+            <div id="pw-change-error" class="pw-error hidden"></div>
+            <button class="settings-save-btn" id="pw-change-btn" style="margin-top:4px">update password</button>
+          </div>
+        </div>
+
+        <div class="settings-actions">
+          <button class="settings-save-btn" id="settings-save-btn">save configuration</button>
+          <span class="settings-status" id="settings-status"></span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.main -->
+</div><!-- /#dashboard-screen -->
+</div><!-- /#app -->
 
 <div id="toast-container"></div>
 
 <script>
+/* ════════════════════════════════════════════
+   GREENOPS DASHBOARD — FULL SPA
+   ════════════════════════════════════════════ */
+
+// ── Matrix rain canvas ──────────────────────────────
+(function(){
+  const canvas = document.getElementById('matrix-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let cols, drops;
+  const chars = '01アイウエオカキクケコサシスセソ0110';
+  function resize(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    cols = Math.floor(canvas.width / 16);
+    drops = Array(cols).fill(1);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+  setInterval(() => {
+    ctx.fillStyle = 'rgba(10,14,11,.05)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#34d353';
+    ctx.font = '13px JetBrains Mono, monospace';
+    drops.forEach((y,i) => {
+      const ch = chars[Math.floor(Math.random()*chars.length)];
+      ctx.fillText(ch, i*16, y*16);
+      if(y*16 > canvas.height && Math.random() > 0.975) drops[i] = 0;
+      drops[i]++;
+    });
+  }, 50);
+})();
+
+
 class GreenOpsApp {
   constructor() {
     this.apiUrl = '';
@@ -590,46 +1279,126 @@ class GreenOpsApp {
     this.machines = [];
     this.filterStatus = '';
     this.searchQuery = '';
-    this.refreshInterval = null;
-    this.REFRESH_MS = 10000;
+    this.refreshTimer = null;
+    this.refreshMs = 10000;
+    this.currentPage = 'overview';
+    this.settings = this._defaultSettings();
+
     this._init();
   }
 
+  _defaultSettings() {
+    return {
+      electricity_cost: 0.12,
+      idle_power_watts: 65,
+      currency: 'USD',
+      idle_threshold: 300,
+      heartbeat_timeout: 180,
+      heartbeat_interval: 60,
+      org_name: '',
+      log_level: 'INFO',
+      refresh_interval: 10000,
+    };
+  }
+
   _init() {
-    this._bindLogin();
-    this._bindChangePw();
-    this._bindDashboard();
-    if (this.token) { this._verifyToken(); } else { this._showScreen('login'); }
+    this._bindAll();
+    if (this.token) { this._verifyToken(); }
+    else { this._showScreen('login'); }
   }
 
+  // ── Screen management ──────────────────────────────────
   _showScreen(name) {
-    document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
-    const ids = { login:'login-screen', changepw:'change-pw-screen', dashboard:'dashboard-screen' };
-    document.getElementById(ids[name])?.classList.add('active');
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    const map = { login:'login-screen', changepw:'change-pw-screen', dashboard:'dashboard-screen' };
+    document.getElementById(map[name])?.classList.add('active');
   }
 
-  _bindLogin() {
-    document.getElementById('login-form')?.addEventListener('submit', e => { e.preventDefault(); this._handleLogin(); });
+  // ── Navigation ─────────────────────────────────────────
+  _navigate(page) {
+    this.currentPage = page;
+    document.querySelectorAll('.nav-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.page === page);
+    });
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById(`page-${page}`)?.classList.add('active');
+    const el = document.getElementById('topbar-page');
+    if (el) el.textContent = page;
+    this._loadPageData(page);
   }
 
+  _loadPageData(page) {
+    if (page === 'overview') { this._loadDashboard(); return; }
+    if (page === 'machines') { this._loadMachinesPage(); return; }
+    if (page === 'energy')   { this._loadEnergyPage(); return; }
+    if (page === 'settings') { this._renderSettings(); return; }
+  }
+
+  // ── Bind all events ────────────────────────────────────
+  _bindAll() {
+    // Login
+    document.getElementById('login-form')?.addEventListener('submit', e => {
+      e.preventDefault(); this._handleLogin();
+    });
+    // Change PW
+    document.getElementById('change-pw-form')?.addEventListener('submit', e => {
+      e.preventDefault(); this._handleChangePw();
+    });
+    // Sidebar nav
+    document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+      el.addEventListener('click', () => this._navigate(el.dataset.page));
+    });
+    // Logout
+    document.getElementById('logout-btn')?.addEventListener('click', () => this._logout());
+    // Refresh
+    document.getElementById('refresh-btn')?.addEventListener('click', () => {
+      const btn = document.getElementById('refresh-btn');
+      btn?.classList.add('spinning');
+      this._loadPageData(this.currentPage)
+        .then?.(() => {}).catch?.(() => {})
+        .finally?.(() => setTimeout(() => btn?.classList.remove('spinning'), 500));
+      // fallback for non-promise
+      setTimeout(() => btn?.classList.remove('spinning'), 700);
+    });
+    // Search
+    document.getElementById('search-input')?.addEventListener('input', e => {
+      this.searchQuery = e.target.value.toLowerCase();
+      this._renderMachineTable();
+    });
+    // Filter pills
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.filterStatus = btn.dataset.status || '';
+        this._renderMachineTable();
+      });
+    });
+    // Settings save
+    document.getElementById('settings-save-btn')?.addEventListener('click', () => this._saveSettings());
+    // PW change in settings
+    document.getElementById('pw-change-btn')?.addEventListener('click', () => this._handleSettingsPwChange());
+  }
+
+  // ── Login ──────────────────────────────────────────────
   async _handleLogin() {
     const username = document.getElementById('username')?.value.trim() || '';
     const password = document.getElementById('password')?.value || '';
-    const errorEl  = document.getElementById('login-error');
-    const errorTxt = document.getElementById('login-error-text');
-    const btn      = document.getElementById('login-btn');
+    const errEl = document.getElementById('login-error');
+    const btn = document.getElementById('login-btn');
     if (!username || !password) return;
 
-    this._setBtnLoading(btn, true);
-    errorEl?.classList.add('hidden');
+    btn.disabled = true;
+    btn.textContent = 'authenticating...';
+    errEl?.classList.add('hidden');
 
     try {
-      const res  = await fetch(`${this.apiUrl}/api/auth/login`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ username, password })
+      const res = await fetch(`${this.apiUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
       });
       const data = await res.json().catch(() => ({}));
-
       if (res.ok) {
         this.token = data.token;
         this.currentUser = data.username || username;
@@ -643,28 +1412,16 @@ class GreenOpsApp {
           this._initDashboard();
         }
       } else {
-        if (errorTxt) errorTxt.textContent = data.error || 'Invalid credentials';
-        errorEl?.classList.remove('hidden');
+        if (errEl) errEl.textContent = data.error || 'authentication failed';
+        errEl?.classList.remove('hidden');
       }
     } catch {
-      if (errorTxt) errorTxt.textContent = 'Cannot connect to server.';
-      errorEl?.classList.remove('hidden');
+      if (errEl) errEl.textContent = 'connection refused — is the server running?';
+      errEl?.classList.remove('hidden');
     } finally {
-      this._setBtnLoading(btn, false);
+      btn.disabled = false;
+      btn.textContent = 'authenticate →';
     }
-  }
-
-  _setBtnLoading(btn, on) {
-    if (!btn) return;
-    btn.disabled = on;
-    const text = btn.querySelector('.btn-text');
-    const spinner = btn.querySelector('.btn-spinner');
-    if (text) text.style.opacity = on ? '0.5' : '1';
-    if (spinner) spinner.classList.toggle('hidden', !on);
-  }
-
-  _bindChangePw() {
-    document.getElementById('change-pw-form')?.addEventListener('submit', e => { e.preventDefault(); this._handleChangePw(); });
   }
 
   async _handleChangePw() {
@@ -672,63 +1429,40 @@ class GreenOpsApp {
     const newPw = document.getElementById('new-pw')?.value || '';
     const cnfPw = document.getElementById('confirm-pw')?.value || '';
     const errEl = document.getElementById('change-pw-error');
-    const errTx = document.getElementById('change-pw-error-text');
-
     errEl?.classList.add('hidden');
-    if (newPw !== cnfPw) { if(errTx) errTx.textContent = 'Passwords do not match.'; errEl?.classList.remove('hidden'); return; }
-    if (newPw.length < 8) { if(errTx) errTx.textContent = 'Min. 8 characters.'; errEl?.classList.remove('hidden'); return; }
-
+    if (newPw !== cnfPw) { errEl.textContent = 'passwords do not match'; errEl.classList.remove('hidden'); return; }
+    if (newPw.length < 8) { errEl.textContent = 'minimum 8 characters required'; errEl.classList.remove('hidden'); return; }
     try {
       const res = await fetch(`${this.apiUrl}/api/auth/change-password`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json','Authorization':`Bearer ${this.token}`},
-        body: JSON.stringify({ current_password: curPw, new_password: newPw })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ current_password: curPw, new_password: newPw }),
       });
-      if (res.ok) { this._toast('Password updated.', 'ok'); this._initDashboard(); }
+      if (res.ok) { this._toast('password updated', 'ok'); this._initDashboard(); }
       else {
         const d = await res.json().catch(() => ({}));
-        if(errTx) errTx.textContent = d.error || 'Failed.'; errEl?.classList.remove('hidden');
+        errEl.textContent = d.error || 'failed to update password';
+        errEl.classList.remove('hidden');
       }
-    } catch { if(errTx) errTx.textContent = 'Cannot connect.'; errEl?.classList.remove('hidden'); }
+    } catch { errEl.textContent = 'connection error'; errEl.classList.remove('hidden'); }
   }
 
   async _verifyToken() {
     try {
-      const res = await fetch(`${this.apiUrl}/api/auth/verify`, { headers:{'Authorization':`Bearer ${this.token}`} });
+      const res = await fetch(`${this.apiUrl}/api/auth/verify`, {
+        headers: { 'Authorization': `Bearer ${this.token}` },
+      });
       if (res.ok) { this._initDashboard(); } else { this._logout(); }
     } catch { this._showScreen('login'); }
   }
 
   _initDashboard() {
     this._showScreen('dashboard');
-    const uEl = document.getElementById('sidebar-user');
-    if (uEl) uEl.textContent = this.currentUser || 'admin';
-    const iEl = document.getElementById('sidebar-user-initial');
-    if (iEl) iEl.textContent = (this.currentUser || 'A')[0].toUpperCase();
-    this._showSkeletons();
+    document.getElementById('sidebar-username').textContent = this.currentUser || 'admin';
+    document.getElementById('sidebar-initial').textContent = (this.currentUser || 'A')[0].toUpperCase();
+    this._loadSettings();
     this._loadDashboard();
     this._startRefresh();
-  }
-
-  _bindDashboard() {
-    document.getElementById('logout-btn')?.addEventListener('click', () => this._logout());
-    document.getElementById('refresh-btn')?.addEventListener('click', () => {
-      const btn = document.getElementById('refresh-btn');
-      btn?.classList.add('spinning');
-      this._loadDashboard().finally(() => setTimeout(() => btn?.classList.remove('spinning'), 600));
-    });
-    document.getElementById('search-input')?.addEventListener('input', e => {
-      this.searchQuery = e.target.value.toLowerCase().trim();
-      this._renderMachines();
-    });
-    document.querySelectorAll('.pill').forEach(p => {
-      p.addEventListener('click', () => {
-        document.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
-        p.classList.add('active');
-        this.filterStatus = p.dataset.status || '';
-        this._renderMachines();
-      });
-    });
   }
 
   _logout() {
@@ -737,10 +1471,10 @@ class GreenOpsApp {
     localStorage.removeItem('greenops_user');
     this._stopRefresh();
     this._showScreen('login');
-    const p = document.getElementById('password');
-    if (p) p.value = '';
+    const p = document.getElementById('password'); if(p) p.value = '';
   }
 
+  // ── Data loading ────────────────────────────────────────
   async _loadDashboard() {
     if (!this.token) return;
     await Promise.allSettled([this._loadStats(), this._loadMachines()]);
@@ -748,40 +1482,60 @@ class GreenOpsApp {
 
   async _loadStats() {
     try {
-      const res = await fetch(`${this.apiUrl}/api/dashboard/stats`, { headers:{'Authorization':`Bearer ${this.token}`} });
-      if (!res.ok) { if (res.status === 401) { this._logout(); } return; }
+      const res = await fetch(`${this.apiUrl}/api/dashboard/stats`, {
+        headers: { 'Authorization': `Bearer ${this.token}` },
+      });
+      if (!res.ok) { if (res.status === 401) this._logout(); return; }
       const s = await res.json();
-      this._setText('stat-total',   s.total_machines   ?? '—');
-      this._setText('stat-online',  s.online_machines  ?? '—');
-      this._setText('stat-idle',    s.idle_machines    ?? '—');
+      this._setText('stat-total', s.total_machines ?? '—');
+      this._setText('stat-online', s.online_machines ?? '—');
+      this._setText('stat-idle', s.idle_machines ?? '—');
       this._setText('stat-offline', s.offline_machines ?? '—');
-      this._setText('stat-energy',  `${(s.total_energy_wasted_kwh||0).toFixed(3)} kWh`);
-      this._setText('stat-cost',    `$${(s.estimated_cost_usd||0).toFixed(2)} estimated cost`);
+      this._setText('stat-energy', `${(s.total_energy_wasted_kwh||0).toFixed(3)} kWh`);
+      const sym = this._currencySymbol(this.settings.currency);
+      this._setText('stat-cost', `${sym}${(s.estimated_cost_usd||0).toFixed(2)}`);
+
       const t = s.total_machines || 1;
-      this._setW('bar-online',  ((s.online_machines  ||0)/t)*100);
-      this._setW('bar-idle',    ((s.idle_machines    ||0)/t)*100);
-      this._setW('bar-offline', ((s.offline_machines ||0)/t)*100);
+      const cells = [
+        ['bar-online-cell',  s.online_machines  || 0],
+        ['bar-idle-cell',    s.idle_machines    || 0],
+        ['bar-offline-cell', s.offline_machines || 0],
+      ];
+      cells.forEach(([id, v]) => {
+        const el = document.getElementById(id);
+        if (el) el.style.setProperty('--bar-w', `${(v/t*100).toFixed(1)}%`);
+      });
     } catch {}
   }
 
   async _loadMachines() {
     try {
-      const res = await fetch(`${this.apiUrl}/api/machines`, { headers:{'Authorization':`Bearer ${this.token}`} });
-      if (!res.ok) { if (res.status === 401) { this._logout(); } return; }
+      const res = await fetch(`${this.apiUrl}/api/machines`, {
+        headers: { 'Authorization': `Bearer ${this.token}` },
+      });
+      if (!res.ok) { if (res.status === 401) this._logout(); return; }
       const d = await res.json();
       this.machines = Array.isArray(d.machines) ? d.machines : [];
-      this._renderMachines();
+      this._renderMachineTable();
     } catch {}
   }
 
-  _showSkeletons() {
-    const g = document.getElementById('machine-grid');
-    if (g) g.innerHTML = Array.from({length:6}).map(() => '<div class="skeleton-card"></div>').join('');
+  async _loadMachinesPage() {
+    await this._loadMachines();
+    this._renderMachinesPage();
   }
 
-  _renderMachines() {
-    const grid = document.getElementById('machine-grid');
-    if (!grid) return;
+  async _loadEnergyPage() {
+    await this._loadStats();
+    await this._loadMachines();
+    this._renderEnergyPage();
+  }
+
+  // ── Render: main machine table ─────────────────────────
+  _renderMachineTable() {
+    const wrap = document.getElementById('machine-table-wrap');
+    if (!wrap) return;
+
     let list = [...this.machines];
     if (this.filterStatus) list = list.filter(m => m.status === this.filterStatus);
     if (this.searchQuery) list = list.filter(m =>
@@ -790,155 +1544,404 @@ class GreenOpsApp {
       (m.os_type||'').toLowerCase().includes(this.searchQuery)
     );
 
+    const countEl = document.getElementById('machine-count');
+    if (countEl) countEl.textContent = `${list.length} machine${list.length !== 1 ? 's' : ''}`;
+
     if (!list.length) {
-      grid.innerHTML = `<div class="empty-state">
-        <div class="empty-state-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:.5"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-        </div>
-        <h3>No machines found</h3>
-        <p>${this.filterStatus||this.searchQuery ? 'Try adjusting your search or filter.' : 'No machines have registered yet.'}</p>
+      wrap.innerHTML = `<div class="empty-state">
+        <div class="empty-state-ascii">  .--.  \n |    | \n '----'</div>
+        ${this.filterStatus || this.searchQuery ? 'no matching machines' : 'no machines registered yet — deploy an agent to get started'}
       </div>`;
       return;
     }
 
-    grid.innerHTML = list.map((m, i) => this._cardHtml(m, i)).join('');
+    const rows = list.map(m => {
+      const badge = this._badge(m.status);
+      const up = this._fmtUp(m.uptime_seconds ?? m.uptime_hours);
+      const idle = this._fmtDur(m.total_idle_seconds || 0);
+      const kwh = (m.energy_wasted_kwh || 0).toFixed(3);
+      const last = this._relTime(m.last_seen);
+      const can = m.status !== 'offline';
+      return `<tr>
+        <td>
+          <div class="cell-host">${this._esc(m.hostname || 'unknown')}</div>
+          <div class="cell-sub">${this._esc(m.mac_address || '—')}</div>
+        </td>
+        <td><span class="cell-mono">${this._esc(m.os_type || '—')}</span></td>
+        <td>${badge}</td>
+        <td><span class="cell-mono">${this._esc(up)}</span></td>
+        <td><span class="cell-dim">${this._esc(idle)}</span></td>
+        <td><span class="cell-mono">${this._esc(kwh)}</span></td>
+        <td><span class="cell-dim">${this._esc(last)}</span></td>
+        <td>
+          <button class="act-btn cmd-sleep" data-id="${m.id}" data-cmd="sleep" ${!can?'disabled':''}>sleep</button>
+          <button class="act-btn cmd-shutdown" data-id="${m.id}" data-cmd="shutdown" ${!can?'disabled':''}>shutdown</button>
+        </td>
+      </tr>`;
+    }).join('');
 
-    grid.querySelectorAll('[data-action]').forEach(btn => {
+    wrap.innerHTML = `<table class="machine-table">
+      <thead><tr>
+        <th>host</th><th>os</th><th>status</th><th>uptime</th><th>idle</th><th>kWh</th><th>last seen</th><th>actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+    wrap.querySelectorAll('.act-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const {machineId, action} = btn.dataset;
-        if (machineId && action) this._sendCommand(parseInt(machineId, 10), action, btn);
+        this._sendCommand(parseInt(btn.dataset.id), btn.dataset.cmd, btn);
       });
     });
   }
 
-  _cardHtml(m, i) {
-    const badge = this._badgeHtml(m.status);
-    const last  = this._relTime(m.last_seen);
-    const up    = this._fmtUp(m.uptime_seconds ?? m.uptime_hours);
-    const idle  = this._fmtDur(m.total_idle_seconds || 0);
-    const kwh   = (m.energy_wasted_kwh || 0).toFixed(3);
-    const can   = m.status !== 'offline';
-    const delay = `animation-delay:${Math.min(i * .05, .4)}s`;
-    const sc    = `status-${m.status || 'offline'}`;
+  // ── Render: machines page (with extra detail) ──────────
+  _renderMachinesPage() {
+    const wrap = document.getElementById('machines-page-table-wrap');
+    const countEl = document.getElementById('machines-page-count');
+    if (!wrap) return;
+    const list = this.machines;
+    if (countEl) countEl.textContent = `${list.length} registered`;
 
-    const moonIcon  = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`;
-    const powerIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`;
-    const clockIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="opacity:.7"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+    if (!list.length) {
+      wrap.innerHTML = `<div class="empty-state">no machines registered</div>`;
+      return;
+    }
 
-    return `<div class="machine-card ${sc}" style="${delay}">
-      <div class="card-head">
-        <div style="min-width:0;flex:1">
-          <div class="card-title" title="${this._e(m.hostname)}">${this._e(m.hostname||'Unknown')}</div>
-          <div class="card-os">${this._e(m.os_type||'—')}</div>
-          <div class="card-mac">${this._e(m.mac_address||'—')}</div>
-        </div>
-        ${badge}
-      </div>
-      <div class="card-metrics">
-        <div class="metric"><span class="metric-val">${this._e(up)}</span><span class="metric-lbl">Uptime</span></div>
-        <div class="metric"><span class="metric-val">${this._e(idle)}</span><span class="metric-lbl">Idle</span></div>
-        <div class="metric"><span class="metric-val">${this._e(kwh)}</span><span class="metric-lbl">kWh</span></div>
-      </div>
-      <div class="card-last-seen">${clockIcon}<span>Last seen ${this._e(last)}</span></div>
-      <div class="card-actions">
-        <button class="action-btn btn-sleep" data-action="sleep" data-machine-id="${m.id}" ${!can?'disabled':''}>
-          ${moonIcon} Sleep
-        </button>
-        <button class="action-btn btn-shutdown" data-action="shutdown" data-machine-id="${m.id}" ${!can?'disabled':''}>
-          ${powerIcon} Shutdown
-        </button>
-      </div>
-    </div>`;
+    const rows = list.map(m => {
+      const badge = this._badge(m.status);
+      const up = this._fmtUp(m.uptime_seconds ?? m.uptime_hours);
+      const idle = this._fmtDur(m.total_idle_seconds || 0);
+      const kwh = (m.energy_wasted_kwh || 0).toFixed(3);
+      const last = this._relTime(m.last_seen);
+      const can = m.status !== 'offline';
+      return `<tr>
+        <td>
+          <div class="cell-host">${this._esc(m.hostname || 'unknown')}</div>
+          <div class="cell-sub">${this._esc(m.os_type || '')} · id:${m.id}</div>
+        </td>
+        <td><span class="cell-sub" style="font-size:10px">${this._esc(m.mac_address || '—')}</span></td>
+        <td>${badge}</td>
+        <td><span class="cell-mono">${this._esc(up)}</span></td>
+        <td><span class="cell-dim">${this._esc(idle)}</span></td>
+        <td><span class="cell-mono">${this._esc(kwh)} kWh</span></td>
+        <td><span class="cell-dim">${this._esc(last)}</span></td>
+        <td>
+          <button class="act-btn cmd-sleep" data-id="${m.id}" data-cmd="sleep" ${!can?'disabled':''}>sleep</button>
+          <button class="act-btn cmd-shutdown" data-id="${m.id}" data-cmd="shutdown" ${!can?'disabled':''}>shutdown</button>
+          <button class="act-btn" data-id="${m.id}" data-cmd="delete" style="color:var(--fg3)">remove</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    wrap.innerHTML = `<table class="machine-table" style="border:1px solid var(--border1)">
+      <thead><tr>
+        <th>hostname</th><th>mac address</th><th>status</th><th>uptime</th><th>idle time</th><th>energy</th><th>last heartbeat</th><th>actions</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+    wrap.querySelectorAll('.act-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd;
+        const id = parseInt(btn.dataset.id);
+        if (cmd === 'delete') {
+          if (confirm(`Remove machine ${id} from registry? This cannot be undone.`)) {
+            this._deleteMachine(id, btn);
+          }
+        } else {
+          this._sendCommand(id, cmd, btn);
+        }
+      });
+    });
   }
 
-  _badgeHtml(status) {
-    const map = {
-      online:  ['badge-online',  'online-dot',  'Online'],
-      idle:    ['badge-idle',    'idle-dot',    'Idle'],
-      offline: ['badge-offline', 'offline-dot', 'Offline'],
-    };
-    const [cls, dot, label] = map[status] || map.offline;
-    return `<span class="status-badge ${cls}"><span class="status-dot ${dot}"></span>${label}</span>`;
+  // ── Render: energy page ────────────────────────────────
+  _renderEnergyPage() {
+    // stats already loaded by _loadStats
+    const stats_res = this._lastStats;
+    if (!stats_res) return;
+
+    const kwh = stats_res.total_energy_wasted_kwh || 0;
+    const cost = stats_res.estimated_cost_usd || 0;
+    const sym = this._currencySymbol(this.settings.currency);
+
+    this._setText('e-kwh', kwh.toFixed(3));
+    this._setText('e-cost', `${sym}${cost.toFixed(2)}`);
+    this._setText('e-rate', `@ ${sym}${(this.settings.electricity_cost||0.12).toFixed(3)} / kWh`);
+    this._setText('e-co2', `CO₂: ${(kwh * 0.42).toFixed(3)} kg equivalent`);
+    this._setText('e-machines', `across ${stats_res.total_machines||0} machines`);
+    this._setText('e-avg-idle', `${(stats_res.average_idle_percentage||0).toFixed(1)}%`);
+
+    const totalIdle = stats_res.total_idle_seconds || 0;
+    this._setText('e-idle-total', `total idle: ${this._fmtDur(totalIdle)}`);
+
+    // Per-machine table
+    const inner = document.getElementById('energy-table-inner');
+    if (!inner || !this.machines.length) { if(inner) inner.innerHTML = '<div class="empty-state">no data</div>'; return; }
+
+    const sorted = [...this.machines].sort((a,b) => (b.energy_wasted_kwh||0)-(a.energy_wasted_kwh||0));
+    const rows = sorted.map(m => {
+      const kwh = (m.energy_wasted_kwh||0).toFixed(3);
+      const co2 = ((m.energy_wasted_kwh||0)*0.42).toFixed(3);
+      const idlePct = m.uptime_seconds > 0
+        ? ((m.total_idle_seconds||0)/m.uptime_seconds*100).toFixed(1)
+        : '0.0';
+      return `<tr>
+        <td><div class="cell-host">${this._esc(m.hostname||'unknown')}</div><div class="cell-sub">${this._esc(m.os_type||'')}</div></td>
+        <td>${this._badge(m.status)}</td>
+        <td><span class="cell-mono">${this._fmtDur(m.total_idle_seconds||0)}</span></td>
+        <td><span class="cell-mono" style="color:var(--g0)">${kwh}</span><span class="cell-sub"> kWh</span></td>
+        <td><span class="cell-dim">${co2} kg</span></td>
+        <td><span class="cell-mono">${idlePct}%</span></td>
+      </tr>`;
+    }).join('');
+
+    inner.innerHTML = `<table class="machine-table">
+      <thead><tr>
+        <th>machine</th><th>status</th><th>total idle</th><th>energy wasted</th><th>CO₂ equiv.</th><th>idle %</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
   }
 
-  async _sendCommand(machineId, action, btn) {
-    const label = action === 'sleep' ? 'Sleep' : 'Shutdown';
-    if (!confirm(`Send ${label} command?\n\nThe agent will execute this on its next heartbeat poll.`)) return;
-
-    const prev = btn.innerHTML;
-    btn.classList.add('loading'); btn.disabled = true;
-    btn.innerHTML = `<svg class="spin" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="2" stroke-dasharray="30" stroke-dashoffset="10"/></svg> Sending…`;
-
+  // Intercept stats load to cache for energy page
+  async _loadStats() {
     try {
-      const res = await fetch(`${this.apiUrl}/api/machines/${machineId}/${action}`, {
-        method:'POST', headers:{'Authorization':`Bearer ${this.token}`}
+      const res = await fetch(`${this.apiUrl}/api/dashboard/stats`, {
+        headers: { 'Authorization': `Bearer ${this.token}` },
+      });
+      if (!res.ok) { if (res.status === 401) this._logout(); return; }
+      const s = await res.json();
+      this._lastStats = s;
+
+      this._setText('stat-total', s.total_machines ?? '—');
+      this._setText('stat-online', s.online_machines ?? '—');
+      this._setText('stat-idle', s.idle_machines ?? '—');
+      this._setText('stat-offline', s.offline_machines ?? '—');
+      this._setText('stat-energy', `${(s.total_energy_wasted_kwh||0).toFixed(3)} kWh`);
+      const sym = this._currencySymbol(this.settings.currency);
+      this._setText('stat-cost', `${sym}${(s.estimated_cost_usd||0).toFixed(2)}`);
+
+      const t = s.total_machines || 1;
+      const cells = [
+        ['bar-online-cell',  s.online_machines  || 0],
+        ['bar-idle-cell',    s.idle_machines    || 0],
+        ['bar-offline-cell', s.offline_machines || 0],
+      ];
+      cells.forEach(([id, v]) => {
+        const el = document.getElementById(id);
+        if (el) el.style.setProperty('--bar-w', `${(v/t*100).toFixed(1)}%`);
+      });
+    } catch {}
+  }
+
+  // ── Settings ────────────────────────────────────────────
+  _loadSettings() {
+    const stored = localStorage.getItem('greenops_settings');
+    if (stored) {
+      try { Object.assign(this.settings, JSON.parse(stored)); } catch {}
+    }
+    this._applySettings();
+    this._renderSettings();
+  }
+
+  _applySettings() {
+    // Apply org name
+    const orgEl = document.getElementById('sidebar-orgname');
+    if (orgEl && this.settings.org_name) orgEl.textContent = this.settings.org_name;
+    // Apply refresh interval
+    this.refreshMs = parseInt(this.settings.refresh_interval) || 10000;
+  }
+
+  _renderSettings() {
+    const s = this.settings;
+    this._setVal('s-electricity-cost', s.electricity_cost);
+    this._setVal('s-idle-power', s.idle_power_watts);
+    this._setVal('s-currency', s.currency);
+    this._setVal('s-idle-threshold', s.idle_threshold);
+    this._setVal('s-heartbeat-timeout', s.heartbeat_timeout);
+    this._setVal('s-heartbeat-interval', s.heartbeat_interval);
+    this._setVal('s-org-name', s.org_name);
+    this._setVal('s-log-level', s.log_level);
+    this._setVal('s-refresh-interval', s.refresh_interval);
+  }
+
+  _saveSettings() {
+    const s = this.settings;
+    s.electricity_cost    = parseFloat(document.getElementById('s-electricity-cost')?.value) || 0.12;
+    s.idle_power_watts    = parseInt(document.getElementById('s-idle-power')?.value) || 65;
+    s.currency            = document.getElementById('s-currency')?.value || 'USD';
+    s.idle_threshold      = parseInt(document.getElementById('s-idle-threshold')?.value) || 300;
+    s.heartbeat_timeout   = parseInt(document.getElementById('s-heartbeat-timeout')?.value) || 180;
+    s.heartbeat_interval  = parseInt(document.getElementById('s-heartbeat-interval')?.value) || 60;
+    s.org_name            = document.getElementById('s-org-name')?.value || '';
+    s.log_level           = document.getElementById('s-log-level')?.value || 'INFO';
+    s.refresh_interval    = parseInt(document.getElementById('s-refresh-interval')?.value) || 10000;
+
+    localStorage.setItem('greenops_settings', JSON.stringify(s));
+    this._applySettings();
+    this._stopRefresh();
+    this._startRefresh();
+
+    const statusEl = document.getElementById('settings-status');
+    if (statusEl) {
+      statusEl.textContent = '[OK] configuration saved';
+      statusEl.className = 'settings-status ok';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'settings-status'; }, 3000);
+    }
+    this._toast('configuration saved', 'ok');
+  }
+
+  async _handleSettingsPwChange() {
+    const cur = document.getElementById('pw-current')?.value || '';
+    const nw = document.getElementById('pw-new')?.value || '';
+    const cf = document.getElementById('pw-confirm')?.value || '';
+    const errEl = document.getElementById('pw-change-error');
+    errEl?.classList.add('hidden');
+
+    if (nw !== cf) { errEl.textContent = 'passwords do not match'; errEl.classList.remove('hidden'); return; }
+    if (nw.length < 8) { errEl.textContent = 'minimum 8 characters'; errEl.classList.remove('hidden'); return; }
+
+    const btn = document.getElementById('pw-change-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'updating...'; }
+    try {
+      const res = await fetch(`${this.apiUrl}/api/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ current_password: cur, new_password: nw }),
       });
       if (res.ok) {
-        this._toast(`${label} command queued.`, 'ok');
-        setTimeout(() => this._loadDashboard(), 3000);
+        this._toast('password updated successfully', 'ok');
+        ['pw-current','pw-new','pw-confirm'].forEach(id => {
+          const el = document.getElementById(id); if(el) el.value = '';
+        });
       } else {
         const d = await res.json().catch(() => ({}));
-        this._toast(d.error || `Failed to send ${label}.`, 'err');
+        errEl.textContent = d.error || 'failed to update password';
+        errEl.classList.remove('hidden');
       }
-    } catch { this._toast('Cannot connect to server.', 'err'); }
-    finally {
-      btn.classList.remove('loading');
-      btn.innerHTML = prev;
-      btn.disabled = false;
-    }
+    } catch { errEl.textContent = 'connection error'; errEl.classList.remove('hidden'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = 'update password'; } }
   }
 
+  // ── Remote commands ────────────────────────────────────
+  async _sendCommand(machineId, action, btn) {
+    const label = action === 'sleep' ? 'Sleep' : 'Shutdown';
+    if (!confirm(`Send ${label} command to machine ${machineId}?\n\nAgent executes on next heartbeat poll.`)) return;
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = '...';
+    try {
+      const res = await fetch(`${this.apiUrl}/api/machines/${machineId}/${action}`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${this.token}` },
+      });
+      if (res.ok) {
+        this._toast(`${label.toLowerCase()} command queued`, 'ok');
+        setTimeout(() => this._loadPageData(this.currentPage), 2000);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        this._toast(d.error || `failed to send ${action}`, 'err');
+      }
+    } catch { this._toast('connection error', 'err'); }
+    finally { btn.textContent = prev; btn.disabled = false; }
+  }
+
+  async _deleteMachine(machineId, btn) {
+    const prev = btn.textContent;
+    btn.disabled = true; btn.textContent = '...';
+    try {
+      const res = await fetch(`${this.apiUrl}/api/machines/${machineId}`, {
+        method: 'DELETE', headers: { 'Authorization': `Bearer ${this.token}` },
+      });
+      if (res.ok) {
+        this._toast(`machine ${machineId} removed`, 'ok');
+        this.machines = this.machines.filter(m => m.id !== machineId);
+        this._renderMachinesPage();
+        this._loadStats();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        this._toast(d.error || 'failed to remove machine', 'err');
+        btn.textContent = prev; btn.disabled = false;
+      }
+    } catch { this._toast('connection error', 'err'); btn.textContent = prev; btn.disabled = false; }
+  }
+
+  // ── Refresh ────────────────────────────────────────────
   _startRefresh() {
     this._stopRefresh();
-    this.refreshInterval = setInterval(() => this._loadDashboard(), this.REFRESH_MS);
+    const ms = parseInt(this.settings.refresh_interval) || 10000;
+    if (ms <= 0) return;
+    this.refreshTimer = setInterval(() => this._loadPageData(this.currentPage), ms);
   }
   _stopRefresh() {
-    if (this.refreshInterval) { clearInterval(this.refreshInterval); this.refreshInterval = null; }
+    if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
   }
 
-  _toast(msg, type='ok') {
+  // ── Toast ──────────────────────────────────────────────
+  _toast(msg, type = 'ok') {
     const c = document.getElementById('toast-container');
     if (!c) return;
     const el = document.createElement('div');
     el.className = `toast toast-${type}`;
-    el.textContent = msg;
+    el.textContent = `[${type.toUpperCase()}] ${msg}`;
     c.appendChild(el);
-    const rm = () => { el.classList.add('toast-leaving'); setTimeout(() => el.remove(), 220); };
+    const rm = () => { el.classList.add('toast-leaving'); setTimeout(() => el.remove(), 200); };
     const t = setTimeout(rm, 3500);
     el.addEventListener('click', () => { clearTimeout(t); rm(); });
   }
 
+  // ── Helpers ────────────────────────────────────────────
+  _badge(status) {
+    const map = {
+      online:  ['badge-online',  'Online'],
+      idle:    ['badge-idle',    'Idle'],
+      offline: ['badge-offline', 'Offline'],
+    };
+    const [cls, label] = map[status] || map.offline;
+    return `<span class="badge ${cls}"><span class="badge-dot"></span>${label}</span>`;
+  }
+
+  _currencySymbol(c) {
+    const m = { USD:'$', EUR:'€', GBP:'£', INR:'₹', JPY:'¥', CAD:'CA$', AUD:'AU$' };
+    return m[c] || '$';
+  }
+
   _setText(id, v) { const el = document.getElementById(id); if(el) el.textContent = v; }
-  _setW(id, pct)  { const el = document.getElementById(id); if(el) el.style.width = `${Math.max(0,Math.min(100,pct))}%`; }
-  _e(t) { if(t==null) return ''; const d=document.createElement('div'); d.textContent=String(t); return d.innerHTML; }
+  _setVal(id, v) { const el = document.getElementById(id); if(el && v !== undefined && v !== null) el.value = v; }
+
+  _esc(t) {
+    if (t == null) return '';
+    const d = document.createElement('div');
+    d.textContent = String(t);
+    return d.innerHTML;
+  }
 
   _relTime(ts) {
     if (!ts) return 'never';
     const d = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-    if (isNaN(d)||d<0) return 'just now';
-    if (d<10)    return 'just now';
-    if (d<60)    return `${d}s ago`;
-    if (d<3600)  return `${Math.floor(d/60)}m ago`;
-    if (d<86400) return `${Math.floor(d/3600)}h ago`;
+    if (isNaN(d) || d < 0) return 'just now';
+    if (d < 10) return 'just now';
+    if (d < 60) return `${d}s ago`;
+    if (d < 3600) return `${Math.floor(d/60)}m ago`;
+    if (d < 86400) return `${Math.floor(d/3600)}h ago`;
     return `${Math.floor(d/86400)}d ago`;
   }
 
   _fmtUp(val) {
-    if (val==null||val==='') return '—';
+    if (val == null || val === '') return '—';
     let s = Number(val);
     if (isNaN(s)) return '—';
-    if (s<1000 && String(val).includes('.') && s!==0) s = s*3600;
-    const h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
-    if(h>0) return `${h}h ${m}m`;
-    if(m>0) return `${m}m`;
+    if (s < 1000 && String(val).includes('.') && s !== 0) s *= 3600;
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
     return `${Math.floor(s)}s`;
   }
 
   _fmtDur(secs) {
-    const s=Number(secs)||0;
-    if(!s) return '0m';
-    const h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
-    return h>0 ? `${h}h ${m}m` : `${m}m`;
+    const s = Number(secs) || 0;
+    if (!s) return '0m';
+    const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
 }
 
