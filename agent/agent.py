@@ -16,7 +16,8 @@ import uuid
 import requests
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
-
+import sys, os
+sys.path.insert(0, os.path.dirname(__file__))
 from config import config
 from idle_detector import IdleDetector
 

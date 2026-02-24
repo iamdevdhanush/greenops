@@ -1,26 +1,11 @@
 """
 GreenOps Server — Application Factory  (production hardened)
 
-Startup lifecycle:
-  1. _configure_logging()   — sets up handlers; gracefully degrades if disk unavailable
-  2. config.validate()      — fail-fast on missing/invalid env vars
-  3. db.initialize()        — creates pool; retries smoke-test; exits on permanent failure
-  4. _ensure_schema()       — applies DDL migrations idempotently, one statement per tx
-  5. handle_errors(app)     — register Flask error handlers
-  6. register blueprints
-  7. _apply_admin_password()— one-time admin password bootstrap
-  8. _start_offline_checker()— daemon thread, sleep-at-bottom pattern
-
-Key fixes vs previous versions:
-  - db.initialize() no longer calls sys.exit(); it raises, and create_app() decides.
-  - Each DDL migration runs in its own transaction (not batched) so partial
-    failure doesn't silently skip subsequent statements.
-  - must_change_password column is queried with a safe fallback (returns False
-    if column doesn't exist yet) to prevent 500s on partially-migrated DBs.
-  - Offline checker uses Event.wait() not time.sleep() for clean shutdown.
-  - app = create_app() is NOT at module level; gunicorn is told the factory
-    via "server.main:create_app()" — this avoids double-init.
-  - Graceful shutdown closes the pool before exit.
+KEY FIX in this version:
+  _apply_admin_password() now checks must_change_password before overwriting.
+  If an admin has already changed their password (must_change_password=FALSE),
+  the env var is ignored. This prevents ADMIN_INITIAL_PASSWORD=admin123 in .env
+  from resetting the password back to admin123 on every container restart.
 """
 
 import os
@@ -44,7 +29,6 @@ from server.routes.dashboard import dashboard_bp
 
 logger = logging.getLogger(__name__)
 
-# Shared stop event so the offline checker thread can be asked to stop cleanly
 _stop_event = threading.Event()
 
 
@@ -53,11 +37,6 @@ _stop_event = threading.Event()
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _configure_logging() -> None:
-    """
-    Configure root logger.  Always adds a StreamHandler (stdout).
-    Adds a RotatingFileHandler if the log directory can be created/written.
-    Degrades gracefully: if the log path is unwritable, logs to stdout only.
-    """
     log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
 
@@ -70,7 +49,6 @@ def _configure_logging() -> None:
         fh.setLevel(log_level)
         handlers.insert(0, fh)
     except OSError as exc:
-        # Print before basicConfig so this warning appears at startup
         print(
             f"[greenops] WARNING: cannot open log file {log_path}: {exc}. "
             "Falling back to stdout only.",
@@ -86,11 +64,9 @@ def _configure_logging() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Schema migrations (idempotent, one-statement-per-transaction)
+# Schema migrations
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Each tuple is (description, sql).  Each runs in its own transaction so a
-# failure in one does not silently roll back subsequent statements.
 _SCHEMA_MIGRATIONS: list[tuple[str, str]] = [
     (
         "add must_change_password to users",
@@ -153,11 +129,6 @@ _SCHEMA_MIGRATIONS: list[tuple[str, str]] = [
 
 
 def _ensure_schema() -> None:
-    """
-    Run each DDL migration in its own transaction.
-    Logs each step.  Non-fatal per-statement (logs error, continues).
-    Fatal only if the DB connection itself fails.
-    """
     for description, sql in _SCHEMA_MIGRATIONS:
         try:
             with db.get_connection() as conn:
@@ -166,22 +137,39 @@ def _ensure_schema() -> None:
             logger.debug(f"Schema OK: {description}")
         except Exception as exc:
             logger.error(f"Schema migration failed [{description}]: {exc}")
-            # Continue — other migrations may still succeed.
-            # A later SELECT for must_change_password will use the safe fallback.
     logger.info("Schema migrations complete.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Admin password bootstrap
+# Admin password bootstrap — FIXED
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _apply_admin_password() -> None:
-    """Apply ADMIN_INITIAL_PASSWORD if set, then clear it from memory."""
+    """
+    Apply ADMIN_INITIAL_PASSWORD only if the admin user still has
+    must_change_password=TRUE (i.e., has never changed from the default).
+
+    PREVIOUS BUG: This ran unconditionally on every restart, resetting any
+    password the admin had set back to the env var value (admin123).
+
+    FIX: Check must_change_password first. If it's FALSE, the admin has
+    already set a real password — skip the override.
+    """
     if not config.ADMIN_INITIAL_PASSWORD:
         return
 
     logger.info("Applying ADMIN_INITIAL_PASSWORD …")
     try:
+        row = db.execute_one(
+            "SELECT must_change_password FROM users WHERE username = 'admin'"
+        )
+        if row and not row["must_change_password"]:
+            logger.info(
+                "ADMIN_INITIAL_PASSWORD skipped — admin password already changed by user."
+            )
+            config.ADMIN_INITIAL_PASSWORD = None
+            return
+
         from server.auth import AuthService
         new_hash = AuthService.hash_password(config.ADMIN_INITIAL_PASSWORD)
         rows = db.execute_query(
@@ -197,7 +185,6 @@ def _apply_admin_password() -> None:
             )
     except Exception as exc:
         logger.error(f"Failed to apply ADMIN_INITIAL_PASSWORD: {exc}", exc_info=True)
-        # Non-fatal: the server starts but admin password may be the migration default.
     finally:
         config.ADMIN_INITIAL_PASSWORD = None
 
@@ -207,19 +194,7 @@ def _apply_admin_password() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _start_offline_checker(app: Flask, interval: int) -> None:
-    """
-    Background daemon thread: marks machines offline and expires commands.
-
-    Uses Event.wait() (not time.sleep()) so the thread wakes up immediately
-    when _stop_event is set during graceful shutdown.
-
-    sleep-at-BOTTOM pattern: runs once immediately on first tick, then waits.
-    This means machines are checked ~1s after server start rather than
-    waiting a full interval before the first check.
-    """
-
     def _loop() -> None:
-        # First tick runs almost immediately, subsequent ticks every `interval` s.
         first_run = True
         while not _stop_event.is_set():
             if not first_run:
@@ -271,11 +246,6 @@ def _start_offline_checker(app: Flask, interval: int) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def create_app() -> Flask:
-    """
-    Flask application factory.
-    Called once in the gunicorn master (preload_app=True).
-    Workers reinitialize the DB pool in post_fork().
-    """
     _configure_logging()
 
     logger.info(
@@ -283,19 +253,16 @@ def create_app() -> Flask:
         f"debug={config.DEBUG}, log={config.LOG_FILE}"
     )
 
-    # ── Validate configuration ────────────────────────────────────────────────
     try:
         config.validate()
     except ValueError as exc:
         logger.critical(f"Configuration invalid:\n{exc}")
         sys.exit(1)
 
-    # ── Flask app ─────────────────────────────────────────────────────────────
     app = Flask(__name__)
     app.config["JSON_SORT_KEYS"] = False
     CORS(app, origins=config.CORS_ORIGINS, supports_credentials=True)
 
-    # ── Database ──────────────────────────────────────────────────────────────
     try:
         db.initialize()
     except Exception as exc:
@@ -305,16 +272,13 @@ def create_app() -> Flask:
         )
         sys.exit(1)
 
-    # ── Schema migrations ─────────────────────────────────────────────────────
     _ensure_schema()
 
-    # ── Error handlers + blueprints ───────────────────────────────────────────
     handle_errors(app)
     app.register_blueprint(auth_bp)
     app.register_blueprint(agents_bp)
     app.register_blueprint(dashboard_bp)
 
-    # ── Built-in routes ───────────────────────────────────────────────────────
     @app.route("/")
     def root():
         return jsonify({
@@ -325,11 +289,6 @@ def create_app() -> Flask:
 
     @app.route("/health")
     def health():
-        """
-        Deterministic health check used by Docker and nginx.
-        Performs a lightweight SELECT 1 to confirm DB connectivity.
-        Returns 200 only when the DB is reachable.
-        """
         try:
             result = db.execute_one("SELECT 1 AS ok")
             if result and result.get("ok") == 1:
@@ -339,13 +298,7 @@ def create_app() -> Flask:
             logger.error(f"Health check DB query failed: {exc}")
             return jsonify({"status": "unhealthy", "database": "disconnected"}), 503
 
-    # ── One-time admin password ───────────────────────────────────────────────
     _apply_admin_password()
-
-    # ── Background services ───────────────────────────────────────────────────
-    # Only start the offline checker in the master process.
-    # preload_app=True means create_app() runs ONCE in the master before fork.
-    # Workers get their own pool via post_fork(); they do NOT run this checker.
     _start_offline_checker(app, config.OFFLINE_CHECK_INTERVAL_SECONDS)
 
     logger.info("GreenOps server initialised and ready.")
@@ -358,18 +311,10 @@ def create_app() -> Flask:
 
 def _graceful_shutdown(signum, frame):
     logger.info(f"Received signal {signum} — shutting down …")
-    _stop_event.set()   # wake up offline checker
+    _stop_event.set()
     db.close()
     sys.exit(0)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Module-level app (for gunicorn "server.main:app" invocation)
-# ─────────────────────────────────────────────────────────────────────────────
-# NOTE: gunicorn.conf.py uses CMD ["gunicorn", "-c", "gunicorn.conf.py",
-# "server.main:app"], which triggers create_app() here at import time.
-# This is intentional with preload_app=True.
-# For local dev ("python3 -m server.main"), main() is called instead.
 
 signal.signal(signal.SIGTERM, _graceful_shutdown)
 signal.signal(signal.SIGINT, _graceful_shutdown)
@@ -384,7 +329,7 @@ def main():
         host=config.HOST,
         port=config.PORT,
         debug=config.DEBUG,
-        use_reloader=False,   # reloader forks; creates second create_app() call
+        use_reloader=False,
         threaded=True,
     )
 
