@@ -1,300 +1,429 @@
+#!/usr/bin/env python3
 """
-GreenOps Agent v2.0
-Heartbeat interval: 60 seconds (configurable)
-Sends uptime_seconds from /proc/uptime (accurate system uptime)
-Polls for remote commands (sleep / shutdown) on every heartbeat
-Graceful shutdown on SIGINT/SIGTERM
+GreenOps Agent — Cross-Platform
+=================================
+Supports: Linux (GUI + headless), Windows
+
+Architecture:
+    IdleDetector (abstract)
+      ├── LinuxIdleDetector  (xprintidle → CPU heuristic fallback)
+      └── WindowsIdleDetector (GetLastInputInfo via ctypes)
+
+    MetricsCollector
+      └── Uses platform-appropriate IdleDetector
+
+    Agent
+      └── Collects metrics every HEARTBEAT_INTERVAL seconds
+      └── POSTs to /api/heartbeat
+      └── Executes commands returned by server (sleep/shutdown)
+
+Usage:
+    python agent.py --server http://localhost:5000 --interval 60
+
+Configuration via ENV (agent-specific only):
+    GREENOPS_SERVER_URL   (required)
+    GREENOPS_INTERVAL     (optional, default: 60)
+    GREENOPS_MACHINE_ID   (optional, auto-detected from MAC)
 """
-import os
-import sys
-import time
+
+import argparse
+import ctypes
 import logging
+import os
 import platform
 import signal
+import socket
 import subprocess
+import sys
+import time
 import uuid
-import requests
-from datetime import datetime, timezone
-from logging.handlers import RotatingFileHandler
-import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from config import config
-from idle_detector import IdleDetector
+from abc import ABC, abstractmethod
+from typing import Optional
 
-# ── Logging ───────────────────────────────────────────────────────────────────
-log_file = config.config_dir / "agent.log"
+import psutil
+import requests
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    handlers=[
-        RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3),
-        logging.StreamHandler(sys.stdout),
-    ],
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("greenops-agent")
 
 
-# ── Remote command execution ──────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# IDLE DETECTION — ABSTRACT BASE
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _execute_command(command: str) -> tuple[bool, str]:
-    """Execute a remote command (sleep or shutdown). Returns (success, message)."""
-    os_name = platform.system()
+class IdleDetector(ABC):
+    """Abstract base for OS-specific idle detection."""
 
-    if command == "sleep":
-        if os_name == "Linux":
-            cmds = [["systemctl", "suspend"], ["pm-suspend"]]
-        elif os_name == "Windows":
-            cmds = [["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]]
-        elif os_name == "Darwin":
-            cmds = [["pmset", "sleepnow"]]
-        else:
-            return False, f"Unsupported OS: {os_name}"
+    @abstractmethod
+    def get_idle_seconds(self) -> int:
+        """
+        Return seconds since last user input.
+        Must always return a non-negative integer.
+        """
+        ...
 
-    elif command == "shutdown":
-        if os_name == "Linux":
-            cmds = [["systemctl", "poweroff"], ["shutdown", "-h", "now"]]
-        elif os_name == "Windows":
-            cmds = [["shutdown", "/s", "/t", "0"]]
-        elif os_name == "Darwin":
-            cmds = [["shutdown", "-h", "now"]]
-        else:
-            return False, f"Unsupported OS: {os_name}"
+    @abstractmethod
+    def name(self) -> str:
+        """Human-readable name for logging."""
+        ...
 
-    else:
-        return False, f"Unknown command: {command}"
 
-    for cmd in cmds:
+# ═══════════════════════════════════════════════════════════════════════════════
+# LINUX IDLE DETECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class LinuxIdleDetector(IdleDetector):
+    """
+    Linux idle detection with two modes:
+
+    1. GUI mode (X11/Wayland session present):
+       Uses `xprintidle` — most accurate, measures actual keyboard/mouse input.
+       Falls back to CPU heuristic if xprintidle is unavailable.
+
+    2. Headless mode (no DISPLAY env var):
+       CPU utilization heuristic: if CPU% stays below threshold for an
+       extended period, the system is considered idle.
+
+    Limitations (documented):
+    - xprintidle requires X11. Wayland requires xwayland or alternative.
+    - CPU heuristic cannot detect background CPU from system processes.
+    - Headless mode may classify a lightly-loaded server as idle.
+    """
+
+    CPU_IDLE_THRESHOLD = 10.0   # % — below this = potentially idle
+    CPU_SAMPLE_INTERVAL = 2.0   # seconds for psutil sample
+    CPU_IDLE_MIN_DURATION = 60  # must be below threshold for this long before counting
+
+    def __init__(self) -> None:
+        self._xprintidle_available: Optional[bool] = None
+        self._has_display: bool = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        self._cpu_idle_since: Optional[float] = None
+        logger.info(
+            f"LinuxIdleDetector: display={'yes' if self._has_display else 'no'}"
+        )
+
+    def name(self) -> str:
+        return "Linux"
+
+    def get_idle_seconds(self) -> int:
+        if self._has_display:
+            result = self._try_xprintidle()
+            if result is not None:
+                return result
+            logger.debug("xprintidle unavailable — falling back to CPU heuristic")
+
+        return self._cpu_heuristic()
+
+    def _try_xprintidle(self) -> Optional[int]:
+        """Try xprintidle; returns idle milliseconds or None on failure."""
+        if self._xprintidle_available is False:
+            return None
+
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                logger.info(f"Command '{command}' executed via {cmd[0]}")
-                return True, f"Executed: {' '.join(cmd)}"
-            else:
-                logger.warning(f"Command {cmd[0]} returned {result.returncode}: {result.stderr.strip()}")
+            proc = subprocess.run(
+                ["xprintidle"],
+                capture_output=True,
+                timeout=2,
+                text=True,
+            )
+            if proc.returncode == 0:
+                self._xprintidle_available = True
+                idle_ms = int(proc.stdout.strip())
+                return max(0, idle_ms // 1000)
         except FileNotFoundError:
-            logger.debug(f"{cmd[0]} not found, trying next")
-        except subprocess.TimeoutExpired:
-            logger.error(f"Command timed out: {' '.join(cmd)}")
-        except Exception as exc:
-            logger.error(f"Command error {cmd[0]}: {exc}")
+            self._xprintidle_available = False
+            logger.warning(
+                "xprintidle not found. Install: apt install xprintidle | "
+                "Falling back to CPU heuristic."
+            )
+        except (subprocess.TimeoutExpired, ValueError, OSError):
+            pass
 
-    return False, f"All methods to execute '{command}' failed"
+        return None
+
+    def _cpu_heuristic(self) -> int:
+        """
+        CPU-based idle heuristic.
+        Returns seconds since CPU went below idle threshold.
+        """
+        cpu = psutil.cpu_percent(interval=self.CPU_SAMPLE_INTERVAL)
+        now = time.monotonic()
+
+        if cpu < self.CPU_IDLE_THRESHOLD:
+            if self._cpu_idle_since is None:
+                self._cpu_idle_since = now
+            idle_duration = now - self._cpu_idle_since
+            return max(0, int(idle_duration))
+        else:
+            # System is active — reset idle timer
+            self._cpu_idle_since = None
+            return 0
 
 
-# ── Agent ─────────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# WINDOWS IDLE DETECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
 
-class GreenOpsAgent:
+class WindowsIdleDetector(IdleDetector):
+    """
+    Windows idle detection using GetLastInputInfo (Win32 API).
 
-    def __init__(self):
-        self.config = config
-        self.idle_detector = IdleDetector()
-        self.token = None
-        self.machine_id = None
-        self.running = True
-        self.retry_delay = self.config.retry_backoff_base
-        self.consecutive_failures = 0
+    This is the canonical, accurate method on Windows:
+    - Tracks keyboard + mouse input at the OS level
+    - GetTickCount() gives elapsed time since system boot in milliseconds
+    - Subtracting last input tick from current tick = idle time
 
-        self.mac_address = self._get_mac_address()
-        self.hostname = platform.node()
-        self.os_type = platform.system()
-        self.os_version = platform.version()
+    No external libraries required — uses ctypes (stdlib).
+    """
 
-        logger.info("GreenOps Agent v2.0 initialised")
-        logger.info(f"System: {self.hostname} ({self.os_type})")
-        logger.info(f"MAC: {self.mac_address}")
-        logger.info(f"Server: {self.config.server_url}")
-        logger.info(f"Heartbeat interval: {self.config.heartbeat_interval}s")
+    class _LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_uint),
+            ("dwTime", ctypes.c_uint),
+        ]
+
+    def name(self) -> str:
+        return "Windows"
+
+    def get_idle_seconds(self) -> int:
+        try:
+            lii = self._LASTINPUTINFO()
+            lii.cbSize = ctypes.sizeof(self._LASTINPUTINFO)
+
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+                logger.warning("GetLastInputInfo returned False")
+                return 0
+
+            # GetTickCount() returns ms since boot (wraps at ~49 days — handle it)
+            current_tick = ctypes.windll.kernel32.GetTickCount()
+            elapsed_ms = (current_tick - lii.dwTime) & 0xFFFFFFFF  # handle wraparound
+            return max(0, elapsed_ms // 1000)
+
+        except OSError as exc:
+            logger.error(f"Windows idle detection error: {exc}")
+            return 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# METRICS COLLECTOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class MetricsCollector:
+    """Collects system metrics using the OS-appropriate idle detector."""
+
+    def __init__(self) -> None:
+        self._idle_detector = self._create_detector()
+        logger.info(f"Idle detector: {self._idle_detector.name()}")
+
+    def _create_detector(self) -> IdleDetector:
+        os_name = platform.system()
+        if os_name == "Windows":
+            return WindowsIdleDetector()
+        elif os_name == "Linux":
+            return LinuxIdleDetector()
+        else:
+            # macOS and others: use CPU heuristic via Linux detector
+            logger.warning(f"OS '{os_name}' not fully supported; using CPU heuristic")
+            return LinuxIdleDetector()
+
+    def collect(self, machine_id: str) -> dict:
+        """
+        Returns unified payload dict.
+        All values are in their canonical units:
+          idle_seconds, uptime_seconds → seconds (int)
+          cpu_usage, memory_usage       → percent (float 0-100)
+        """
+        idle_seconds   = self._idle_detector.get_idle_seconds()
+        cpu_usage      = psutil.cpu_percent(interval=1)
+        memory_usage   = psutil.virtual_memory().percent
+        uptime_seconds = self._get_uptime_seconds()
+        hostname       = socket.gethostname()
+        os_type        = platform.system()
+
+        return {
+            "machine_id":     machine_id,
+            "hostname":       hostname,
+            "os_type":        os_type,
+            "idle_seconds":   idle_seconds,
+            "cpu_usage":      round(cpu_usage, 1),
+            "memory_usage":   round(memory_usage, 1),
+            "uptime_seconds": uptime_seconds,
+        }
 
     @staticmethod
-    def _get_mac_address() -> str:
-        try:
-            mac_int = uuid.getnode()
-            mac_hex = f"{mac_int:012x}"
-            return ":".join(mac_hex[i:i+2] for i in range(0, 12, 2)).upper()
-        except Exception as exc:
-            logger.error(f"Failed to get MAC: {exc}")
-            return "00:00:00:00:00:00"
+    def _get_uptime_seconds() -> int:
+        """Returns system uptime in seconds (integer)."""
+        boot_ts = psutil.boot_time()
+        return max(0, int(time.time() - boot_ts))
 
-    def register(self) -> bool:
-        logger.info("Registering with server …")
-        try:
-            resp = requests.post(
-                f"{self.config.server_url}/api/agents/register",
-                json={
-                    "mac_address": self.mac_address,
-                    "hostname": self.hostname,
-                    "os_type": self.os_type,
-                    "os_version": self.os_version,
-                },
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                self.token = data["token"]
-                self.machine_id = data["machine_id"]
-                self.config.save_token(self.token)
-                logger.info(
-                    f"Registered successfully. Machine ID: {self.machine_id} "
-                    f"({data.get('message', '')})"
-                )
-                return True
-            else:
-                logger.error(f"Registration failed: {resp.status_code} {resp.text}")
-                return False
-        except requests.exceptions.ConnectionError:
-            logger.error(f"Cannot connect to {self.config.server_url}")
-            return False
-        except Exception as exc:
-            logger.error(f"Registration error: {exc}")
-            return False
 
-    def send_heartbeat(self) -> bool:
-        if not self.token:
-            return False
-        try:
-            idle_seconds = self.idle_detector.get_idle_seconds()
-            uptime_seconds = self.idle_detector.get_uptime_seconds()
+# ═══════════════════════════════════════════════════════════════════════════════
+# MACHINE ID
+# ═══════════════════════════════════════════════════════════════════════════════
 
-            resp = requests.post(
-                f"{self.config.server_url}/api/agents/heartbeat",
-                json={
-                    "idle_seconds": idle_seconds,
-                    "cpu_usage": 0.0,
-                    "memory_usage": 0.0,
-                    "uptime_seconds": uptime_seconds,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                logger.debug(
-                    f"Heartbeat OK — idle={idle_seconds}s, "
-                    f"uptime={uptime_seconds}s, "
-                    f"status={data.get('machine_status')}"
-                )
-                return True
-            elif resp.status_code == 401:
-                logger.error("Token rejected — re-registering")
-                self.token = None
-                return False
-            else:
-                logger.error(f"Heartbeat failed: {resp.status_code} {resp.text}")
-                return False
-        except requests.exceptions.ConnectionError:
-            logger.warning("Cannot reach server (will retry)")
-            return False
-        except Exception as exc:
-            logger.error(f"Heartbeat error: {exc}")
-            return False
+def get_machine_id() -> str:
+    """
+    Returns a stable machine identifier.
+    Priority:
+      1. GREENOPS_MACHINE_ID env var (explicit override)
+      2. First non-loopback MAC address
+      3. UUID based on machine hostname (last resort)
+    """
+    if override := os.environ.get("GREENOPS_MACHINE_ID"):
+        return override.strip()
 
-    def poll_commands(self) -> None:
-        """Check for and execute pending remote commands."""
-        if not self.token:
-            return
-        try:
-            resp = requests.get(
-                f"{self.config.server_url}/api/agents/commands",
-                headers={"Authorization": f"Bearer {self.token}"},
-                timeout=5,
-            )
-            if resp.status_code != 200:
-                return
+    # Try to get a real MAC address
+    for iface, addrs in psutil.net_if_addrs().items():
+        for addr in addrs:
+            if addr.family == psutil.AF_LINK:
+                mac = addr.address
+                # Skip loopback and null MACs
+                if mac and mac != "00:00:00:00:00:00" and not iface.startswith("lo"):
+                    return mac.lower()
 
-            commands = resp.json().get("commands", [])
-            for cmd in commands:
-                cmd_id = cmd["id"]
-                command = cmd["command"]
-                logger.info(f"Executing remote command: {command} (id={cmd_id})")
+    # Last resort — deterministic UUID from hostname
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, socket.gethostname()))
 
-                success, message = _execute_command(command)
-                status = "executed" if success else "failed"
 
-                try:
-                    requests.post(
-                        f"{self.config.server_url}/api/agents/commands/{cmd_id}/result",
-                        json={"status": status, "message": message},
-                        headers={"Authorization": f"Bearer {self.token}"},
-                        timeout=5,
-                    )
-                except Exception as exc:
-                    logger.error(f"Failed to report command result: {exc}")
+# ═══════════════════════════════════════════════════════════════════════════════
+# AGENT
+# ═══════════════════════════════════════════════════════════════════════════════
 
-        except requests.exceptions.ConnectionError:
-            pass  # Server unreachable — not critical for command polling
-        except Exception as exc:
-            logger.error(f"Command poll error: {exc}")
+class Agent:
+    """Main agent loop."""
 
-    def run(self):
-        logger.info("Agent starting …")
-        self.token = self.config.load_token()
-        if self.token:
-            logger.info("Loaded existing token")
-        else:
-            logger.info("No token found — will register on first cycle")
+    CONNECT_TIMEOUT = 10   # seconds
+    READ_TIMEOUT    = 30   # seconds
+    MAX_BACKOFF     = 300  # seconds (5 min max retry wait)
 
-        while self.running:
+    def __init__(self, server_url: str, interval: int) -> None:
+        self.server_url  = server_url.rstrip("/")
+        self.interval    = interval
+        self.machine_id  = get_machine_id()
+        self.metrics     = MetricsCollector()
+        self._running    = True
+        self._session    = requests.Session()
+        self._session.headers.update({"Content-Type": "application/json"})
+        self._fail_count = 0
+
+        logger.info(f"Agent starting — server={self.server_url} id={self.machine_id} interval={self.interval}s")
+
+        # Graceful shutdown
+        signal.signal(signal.SIGTERM, self._handle_signal)
+        signal.signal(signal.SIGINT, self._handle_signal)
+
+    def run(self) -> None:
+        """Main loop: collect → send → sleep → repeat."""
+        while self._running:
+            start = time.monotonic()
             try:
-                if not self.token:
-                    if self.register():
-                        self.retry_delay = self.config.retry_backoff_base
-                        self.consecutive_failures = 0
-                    else:
-                        self.consecutive_failures += 1
-                        self._backoff()
-                        continue
-
-                if self.send_heartbeat():
-                    self.poll_commands()
-                    self.retry_delay = self.config.retry_backoff_base
-                    self.consecutive_failures = 0
-                    time.sleep(self.config.heartbeat_interval)
-                else:
-                    self.consecutive_failures += 1
-                    self._backoff()
-
-            except KeyboardInterrupt:
-                logger.info("Interrupted — shutting down")
-                break
+                self._tick()
+                self._fail_count = 0
             except Exception as exc:
-                logger.error(f"Unexpected error: {exc}", exc_info=True)
-                self.consecutive_failures += 1
-                self._backoff()
+                self._fail_count += 1
+                wait = min(self.interval * self._fail_count, self.MAX_BACKOFF)
+                logger.error(f"Agent tick error (attempt {self._fail_count}): {exc}; retrying in {wait}s")
+                time.sleep(wait)
+                continue
 
-        logger.info("Agent stopped.")
+            # Sleep for remainder of interval
+            elapsed = time.monotonic() - start
+            sleep_for = max(0, self.interval - elapsed)
+            time.sleep(sleep_for)
 
-    def _backoff(self):
-        if self.consecutive_failures >= self.config.max_retry_attempts:
-            logger.warning(
-                f"{self.consecutive_failures} consecutive failures. "
-                f"Retrying in {self.retry_delay}s …"
-            )
+    def _tick(self) -> None:
+        """One collection + send cycle."""
+        payload = self.metrics.collect(self.machine_id)
+        logger.debug(
+            f"Heartbeat → idle={payload['idle_seconds']}s "
+            f"cpu={payload['cpu_usage']}% mem={payload['memory_usage']}% "
+            f"uptime={payload['uptime_seconds']}s"
+        )
+
+        resp = self._session.post(
+            f"{self.server_url}/api/heartbeat",
+            json=payload,
+            timeout=(self.CONNECT_TIMEOUT, self.READ_TIMEOUT),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        command = data.get("command")
+        if command:
+            logger.info(f"Received command: {command!r}")
+            self._execute_command(command)
+
+    def _execute_command(self, command: str) -> None:
+        """Execute a server-issued command."""
+        os_name = platform.system()
+
+        if command == "sleep":
+            if os_name == "Linux":
+                # systemctl suspend — requires appropriate sudoers rule or polkit
+                # Alternatives: pm-suspend, s2ram
+                subprocess.Popen(["systemctl", "suspend"])
+            elif os_name == "Windows":
+                subprocess.Popen(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
+            else:
+                logger.warning(f"Sleep not implemented for OS: {os_name}")
+
+        elif command == "shutdown":
+            if os_name == "Linux":
+                subprocess.Popen(["shutdown", "-h", "now"])
+            elif os_name == "Windows":
+                subprocess.Popen(["shutdown", "/s", "/t", "0"])
+            else:
+                logger.warning(f"Shutdown not implemented for OS: {os_name}")
+
         else:
-            logger.info(f"Retry in {self.retry_delay}s …")
-        time.sleep(self.retry_delay)
-        self.retry_delay = min(self.retry_delay * 2, self.config.retry_backoff_max)
+            logger.warning(f"Unknown command received: {command!r}")
 
-    def shutdown(self):
-        logger.info("Shutting down agent …")
-        self.running = False
+    def _handle_signal(self, sig, frame) -> None:
+        logger.info(f"Received signal {sig} — shutting down gracefully")
+        self._running = False
 
 
-agent = None
+# ═══════════════════════════════════════════════════════════════════════════════
+# ENTRYPOINT
+# ═══════════════════════════════════════════════════════════════════════════════
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description="GreenOps Agent")
+    parser.add_argument(
+        "--server",
+        default=os.environ.get("GREENOPS_SERVER_URL", ""),
+        help="Server base URL, e.g. http://192.168.1.100:5000",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=int(os.environ.get("GREENOPS_INTERVAL", "60")),
+        help="Heartbeat interval in seconds (default: 60)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    args = parser.parse_args()
 
-def signal_handler(signum, frame):
-    logger.info(f"Received signal {signum}")
-    if agent:
-        agent.shutdown()
-    sys.exit(0)
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
+    if not args.server:
+        logger.error("Server URL is required. Set --server or GREENOPS_SERVER_URL env var.")
+        sys.exit(1)
 
-def main():
-    global agent
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    agent = GreenOpsAgent()
+    if args.interval < 5:
+        logger.error("Interval must be at least 5 seconds.")
+        sys.exit(1)
+
+    agent = Agent(server_url=args.server, interval=args.interval)
     agent.run()
 
 

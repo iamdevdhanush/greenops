@@ -1,130 +1,176 @@
 """
-GreenOps Server Configuration
-==============================
-All settings read from environment variables with safe defaults.
-Call config.validate() at startup to fail fast on misconfiguration.
+GreenOps — Settings Manager
+============================
+Single source of truth for all runtime configuration.
 
-Local dev: export vars or create .env in project root.
-Docker:    env_file: .env in docker-compose.yml.
+Hierarchy (strict):
+  1. Database (app_settings table)  ← AUTHORITATIVE
+  2. Hardcoded defaults             ← fallback ONLY if DB row missing
+
+ENV vars are NOT used for runtime settings.
+Only infrastructure ENV remains: DATABASE_URL, JWT_SECRET_KEY, FLASK_SECRET_KEY.
+
+Usage:
+    from server.config import settings
+    threshold = settings.get_int('idle_threshold_seconds')
 """
 
-import os
-import sys
 import logging
-from pathlib import Path
-from typing import Optional
+import os
+import time
+from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
+
+# ─── Hardcoded defaults (last resort only) ───────────────────────────────────
+_DEFAULTS: Dict[str, str] = {
+    "electricity_cost_per_kwh":   "0.12",
+    "idle_power_watts":            "65",
+    "currency":                    "USD",
+    "idle_threshold_seconds":      "300",
+    "heartbeat_timeout_seconds":   "180",
+    "agent_heartbeat_interval":    "60",
+    "organization_name":           "GreenOps",
+    "log_level":                   "INFO",
+}
+
+# ─── Infrastructure ENV (never in DB) ────────────────────────────────────────
+DATABASE_URL:      str = os.environ["DATABASE_URL"]           # required
+JWT_SECRET_KEY:    str = os.environ["JWT_SECRET_KEY"]         # required
+FLASK_SECRET_KEY:  str = os.environ.get("FLASK_SECRET_KEY", JWT_SECRET_KEY)
+FLASK_ENV:         str = os.environ.get("FLASK_ENV", "production")
+DEBUG:             bool = FLASK_ENV == "development"
 
 
-# Resolve the project root relative to this file so LOG_FILE default
-# works regardless of the current working directory.
-_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+class SettingsManager:
+    """
+    Reads runtime settings from the database with a short TTL cache.
+    Never reads runtime config from ENV.
 
+    Thread-safe for read-heavy workloads (cache refresh is idempotent).
+    TTL default: 30 seconds — balances freshness vs DB load.
+    """
 
-class Config:
+    TTL_SECONDS = 30
 
-    # ── Web server ────────────────────────────────────────────────────────────
-    HOST: str  = os.getenv("HOST", "0.0.0.0")
-    PORT: int  = int(os.getenv("PORT", "8000"))
-    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    def __init__(self) -> None:
+        self._cache: Dict[str, str] = {}
+        self._cache_ts: float = 0.0
+        self._db = None  # injected after app init
 
-    # ── Database ──────────────────────────────────────────────────────────────
-    DATABASE_URL: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql://greenops:greenops@localhost:5432/greenops",
-    )
-    # Connection pool size.  With 4 workers × 2 threads = 8 concurrent users.
-    # 10 gives comfortable headroom without exhausting PG max_connections.
-    DB_POOL_SIZE: int = int(os.getenv("DB_POOL_SIZE", "10"))
+    def init_app(self, db) -> None:
+        """Call once after database pool is ready."""
+        self._db = db
+        self._refresh()
 
-    # ── Authentication ────────────────────────────────────────────────────────
-    JWT_SECRET_KEY: str       = os.getenv("JWT_SECRET_KEY", "")
-    JWT_ALGORITHM: str        = "HS256"
-    JWT_EXPIRATION_HOURS: int = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+    # ─── Public API ──────────────────────────────────────────────────────────
 
-    # ── Rate limiting ─────────────────────────────────────────────────────────
-    LOGIN_RATE_LIMIT:  int = int(os.getenv("LOGIN_RATE_LIMIT",  "5"))
-    LOGIN_RATE_WINDOW: int = int(os.getenv("LOGIN_RATE_WINDOW", "900"))
-
-    # ── Energy calculation ────────────────────────────────────────────────────
-    IDLE_POWER_WATTS:         float = float(os.getenv("IDLE_POWER_WATTS",         "65"))
-    ACTIVE_POWER_WATTS:       float = float(os.getenv("ACTIVE_POWER_WATTS",       "120"))
-    ELECTRICITY_COST_PER_KWH: float = float(os.getenv("ELECTRICITY_COST_PER_KWH", "0.12"))
-
-    # ── Heartbeat / machine status ────────────────────────────────────────────
-    HEARTBEAT_TIMEOUT_SECONDS:      int = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS",      "180"))
-    IDLE_THRESHOLD_SECONDS:         int = int(os.getenv("IDLE_THRESHOLD_SECONDS",         "300"))
-    OFFLINE_CHECK_INTERVAL_SECONDS: int = int(os.getenv("OFFLINE_CHECK_INTERVAL_SECONDS", "60"))
-
-    # ── Logging ───────────────────────────────────────────────────────────────
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-    # Use __file__-relative default so the path is stable regardless of cwd.
-    LOG_FILE: str = os.getenv(
-        "LOG_FILE",
-        str(_PROJECT_ROOT / "logs" / "greenops.log"),
-    )
-
-    # ── CORS ──────────────────────────────────────────────────────────────────
-    # Comma-separated list of allowed origins.  Use "*" for dev only.
-    CORS_ORIGINS: list = [
-        o.strip()
-        for o in os.getenv("CORS_ORIGINS", "*").split(",")
-        if o.strip()
-    ]
-
-    # ── Initial admin password ────────────────────────────────────────────────
-    # Set on first boot to override the migration default hash.
-    # Cleared from memory after first use. Do not set in production after
-    # the first deployment.
-    ADMIN_INITIAL_PASSWORD: Optional[str] = os.getenv("ADMIN_INITIAL_PASSWORD")
-
-    # ── Validation ────────────────────────────────────────────────────────────
-
-    @classmethod
-    def validate(cls) -> None:
-        """
-        Strict configuration validation.
-        Raises ValueError listing ALL problems found (not just the first).
-        Call this at application startup — fail fast is safer than broken runtime.
-        """
-        errors: list[str] = []
-
-        if not cls.DATABASE_URL:
-            errors.append(
-                "DATABASE_URL is not set. "
-                "Example: postgresql://user:pass@host:5432/dbname"
+    def get(self, key: str) -> str:
+        """Return setting value as string. Refreshes cache if stale."""
+        self._maybe_refresh()
+        if key in self._cache:
+            return self._cache[key]
+        if key in _DEFAULTS:
+            logger.warning(
+                f"Setting '{key}' not found in DB; using hardcoded default: {_DEFAULTS[key]!r}"
             )
+            return _DEFAULTS[key]
+        raise KeyError(f"Unknown setting: {key!r}")
 
-        if not cls.JWT_SECRET_KEY:
-            errors.append(
-                "JWT_SECRET_KEY is not set. "
-                "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    def get_int(self, key: str) -> int:
+        """Return setting as integer. Raises ValueError on bad data."""
+        val = self.get(key)
+        try:
+            return int(float(val))  # handles "300", "300.0", "300.5" → 300
+        except (ValueError, TypeError) as exc:
+            logger.error(f"Setting '{key}' has non-integer value {val!r}: {exc}")
+            # Fall back to default
+            return int(float(_DEFAULTS.get(key, "0")))
+
+    def get_float(self, key: str) -> float:
+        """Return setting as float."""
+        val = self.get(key)
+        try:
+            return float(val)
+        except (ValueError, TypeError) as exc:
+            logger.error(f"Setting '{key}' has non-float value {val!r}: {exc}")
+            return float(_DEFAULTS.get(key, "0"))
+
+    def get_all(self) -> Dict[str, str]:
+        """Return all settings as dict (refreshes if stale)."""
+        self._maybe_refresh()
+        return dict(self._cache)
+
+    def invalidate(self) -> None:
+        """Force next read to hit the database."""
+        self._cache_ts = 0.0
+
+    # ─── Internal ────────────────────────────────────────────────────────────
+
+    def _maybe_refresh(self) -> None:
+        if time.monotonic() - self._cache_ts > self.TTL_SECONDS:
+            self._refresh()
+
+    def _refresh(self) -> None:
+        if self._db is None:
+            logger.debug("SettingsManager: DB not yet initialized; using defaults.")
+            self._cache = dict(_DEFAULTS)
+            self._cache_ts = time.monotonic()
+            return
+
+        try:
+            rows = self._db.execute_query(
+                "SELECT key, value FROM app_settings",
+                fetch=True,
             )
-        elif len(cls.JWT_SECRET_KEY) < 32:
-            if not cls.DEBUG:
-                errors.append(
-                    f"JWT_SECRET_KEY is too short ({len(cls.JWT_SECRET_KEY)} chars). "
-                    "Use at least 32 characters in production."
-                )
+            if rows:
+                fresh = {r["key"]: r["value"] for r in rows}
+                # Merge: DB values override defaults
+                merged = dict(_DEFAULTS)
+                merged.update(fresh)
+                self._cache = merged
             else:
-                logging.getLogger(__name__).warning(
-                    f"JWT_SECRET_KEY is short ({len(cls.JWT_SECRET_KEY)} chars). "
-                    "Acceptable in DEBUG mode only."
-                )
-
-        if cls.DB_POOL_SIZE < 1 or cls.DB_POOL_SIZE > 100:
-            errors.append(
-                f"DB_POOL_SIZE={cls.DB_POOL_SIZE} is outside valid range [1, 100]."
-            )
-
-        if cls.JWT_EXPIRATION_HOURS < 1:
-            errors.append("JWT_EXPIRATION_HOURS must be >= 1.")
-
-        if errors:
-            raise ValueError(
-                "GreenOps configuration errors:\n"
-                + "\n".join(f"  - {e}" for e in errors)
-            )
+                logger.warning("app_settings table is empty; using defaults.")
+                self._cache = dict(_DEFAULTS)
+            self._cache_ts = time.monotonic()
+        except Exception as exc:
+            logger.error(f"Failed to load settings from DB: {exc}", exc_info=True)
+            # Don't crash — keep existing cache or use defaults
+            if not self._cache:
+                self._cache = dict(_DEFAULTS)
+            self._cache_ts = time.monotonic() - (self.TTL_SECONDS / 2)  # retry sooner
 
 
-config = Config()
+# ─── Module-level singleton ──────────────────────────────────────────────────
+settings = SettingsManager()
+
+# ─── Backwards-compatibility alias ───────────────────────────────────────────
+# main.py does: from server.config import config
+# This provides a drop-in so it doesn't crash, while runtime values stay live.
+class _ConfigCompat:
+    """Compatibility shim for old `config` import in main.py."""
+    DATABASE_URL     = DATABASE_URL
+    JWT_SECRET_KEY   = JWT_SECRET_KEY
+    FLASK_SECRET_KEY = FLASK_SECRET_KEY
+    SECRET_KEY       = FLASK_SECRET_KEY  # Flask uses SECRET_KEY
+    FLASK_ENV        = FLASK_ENV
+    DEBUG            = DEBUG
+    PORT             = int(os.environ.get("PORT", "5000"))
+
+    @property
+    def IDLE_THRESHOLD_SECONDS(self):
+        return settings.get_int("idle_threshold_seconds")
+
+    @property
+    def HEARTBEAT_TIMEOUT_SECONDS(self):
+        return settings.get_int("heartbeat_timeout_seconds")
+
+    @property
+    def IDLE_POWER_WATTS(self):
+        return settings.get_int("idle_power_watts")
+
+    @property
+    def ELECTRICITY_COST_PER_KWH(self):
+        return settings.get_float("electricity_cost_per_kwh")
+
+config = _ConfigCompat()

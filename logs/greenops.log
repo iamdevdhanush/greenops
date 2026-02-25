@@ -899,3 +899,31 @@ Ensure DATABASE_URL is correct and PostgreSQL is running.
 2026-02-24 15:04:26,038 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4213s
 2026-02-24 15:05:26,199 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4274s
 2026-02-24 15:06:26,387 server.services.machine        INFO     Heartbeat: id=4 status=online idle=60s increment=0s energy_delta=0.000 kWh uptime=4334s
+2026-02-24 15:07:26,610 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4394s
+2026-02-24 15:08:26,736 server.services.machine        INFO     Heartbeat: id=4 status=online idle=42s increment=0s energy_delta=0.000 kWh uptime=4454s
+2026-02-24 15:09:26,922 server.services.machine        INFO     Heartbeat: id=4 status=online idle=102s increment=0s energy_delta=0.000 kWh uptime=4514s
+2026-02-24 15:10:27,976 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=4574s
+2026-02-24 15:11:32,695 server.services.machine        INFO     Heartbeat: id=4 status=online idle=29s increment=0s energy_delta=0.000 kWh uptime=4636s
+2026-02-24 15:12:42,074 server.services.machine        INFO     Heartbeat: id=4 status=online idle=93s increment=0s energy_delta=0.000 kWh uptime=4699s
+2026-02-24 15:13:49,508 server.services.machine        INFO     Heartbeat: id=4 status=online idle=51s increment=0s energy_delta=0.000 kWh uptime=4763s
+2026-02-24 15:14:52,987 server.services.machine        INFO     Heartbeat: id=4 status=online idle=114s increment=0s energy_delta=0.000 kWh uptime=4826s
+2026-02-24 15:15:54,835 server.services.machine        INFO     Heartbeat: id=4 status=online idle=176s increment=0s energy_delta=0.000 kWh uptime=4889s
+2026-02-24 15:16:56,980 server.services.machine        INFO     Heartbeat: id=4 status=online idle=238s increment=0s energy_delta=0.000 kWh uptime=4950s
+2026-02-24 15:17:58,275 server.services.machine        INFO     Heartbeat: id=4 status=online idle=55s increment=0s energy_delta=0.000 kWh uptime=5013s
+2026-02-24 15:18:59,986 server.services.machine        INFO     Heartbeat: id=4 status=online idle=116s increment=0s energy_delta=0.000 kWh uptime=5074s
+2026-02-24 15:20:02,013 server.services.machine        INFO     Heartbeat: id=4 status=online idle=1s increment=0s energy_delta=0.000 kWh uptime=5136s
+2026-02-24 15:21:04,653 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5200s
+2026-02-24 15:22:04,195 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5260s
+2026-02-24 15:23:04,684 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5320s
+2026-02-24 15:24:05,167 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5380s
+2026-02-24 15:25:05,238 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5440s
+2026-02-24 15:26:05,381 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5500s
+2026-02-24 15:27:05,309 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5560s
+2026-02-24 15:28:05,416 server.services.machine        INFO     Heartbeat: id=4 status=online idle=2s increment=0s energy_delta=0.000 kWh uptime=5620s
+2026-02-24 15:29:05,507 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5680s
+2026-02-24 15:30:05,590 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5741s
+2026-02-24 15:31:05,678 server.services.machine        INFO     Heartbeat: id=4 status=online idle=0s increment=0s energy_delta=0.000 kWh uptime=5801s
+2026-02-24 15:31:19,264 server.database                INFO     Database pool closed.
+2026-02-24 15:31:19,272 server.database                INFO     Database pool closed.
+2026-02-24 15:31:19,559 server.database                INFO     Database pool closed.
+2026-02-24 15:31:19,561 server.database                INFO     Database pool closed.

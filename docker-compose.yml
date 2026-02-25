@@ -1,87 +1,107 @@
-# GreenOps — Production Docker Compose
-# ─────────────────────────────────────────────────────────────────────────────
-# Start order:
-#   db (healthy) → server (healthy) → nginx
-#
-# nginx waits for server to be *healthy* (not just started) so it never
-# starts proxying to a server that hasn't finished DB init yet.
-# ─────────────────────────────────────────────────────────────────────────────
+version: "3.9"
+
+# ============================================================
+# GreenOps — Docker Compose (Production-Stable)
+# ============================================================
+# Key fixes:
+#   - db healthcheck: server only starts after Postgres is ready
+#   - migrate service: runs all migrations before server boots
+#   - restart: unless-stopped on all long-lived services
+#   - Only infrastructure secrets in ENV (no runtime config)
+# ============================================================
 
 services:
 
   # ── PostgreSQL ─────────────────────────────────────────────────────────────
   db:
     image: postgres:15-alpine
-    container_name: greenops-db
-    env_file: .env
+    restart: unless-stopped
     environment:
       POSTGRES_DB:       greenops
       POSTGRES_USER:     greenops
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    command: >
-      postgres
-      -c tcp_keepalives_idle=60
-      -c tcp_keepalives_interval=10
-      -c tcp_keepalives_count=6
-      -c log_min_duration_statement=1000
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
-    ports:
-      - "5433:5432"     # host:5433 to avoid conflict with local postgres
+      - db_data:/var/lib/postgresql/data
+    # No host port binding — DB is only needed inside the Docker network.
+    # Avoids conflict with any PostgreSQL running on the host at port 5432.
+    # To connect from the host for debugging: docker compose exec db psql -U greenops greenops
     healthcheck:
-      test:         ["CMD-SHELL", "pg_isready -U greenops -d greenops"]
-      interval:     5s
-      timeout:      5s
-      retries:      12
+      test: ["CMD-SHELL", "pg_isready -U greenops -d greenops"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
       start_period: 10s
-    restart: unless-stopped
-    networks:
-      - greenops
 
-  # ── GreenOps API Server ────────────────────────────────────────────────────
-  server:
-    build:
-      context:    .
-      dockerfile: Dockerfile.server
-    container_name: greenops-server
-    env_file: .env
+  # ── Migrations (run once, exit) ────────────────────────────────────────────
+  migrate:
+    image: postgres:15-alpine
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./migrations:/migrations:ro
+    command: >
+      sh -c "
+        echo 'Running migrations...'
+        for f in /migrations/*.sql; do
+          echo \"Applying: $$f\"
+          psql -h db -U greenops -d greenops -f $$f
+        done
+        echo 'Migrations complete.'
+      "
+    restart: "no"
+
+  # ── GreenOps Server ────────────────────────────────────────────────────────
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # ── Infrastructure only (runtime config lives in DB) ──────────────────
+      DATABASE_URL:      postgresql://greenops:${POSTGRES_PASSWORD}@db:5432/greenops
+      JWT_SECRET_KEY:    ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      FLASK_SECRET_KEY:  ${FLASK_SECRET_KEY:-${JWT_SECRET_KEY}}
+      FLASK_ENV:         ${FLASK_ENV:-production}
+      PORT:              ${PORT:-5000}
+      # ── REMOVED: IDLE_THRESHOLD_SECONDS, IDLE_POWER_WATTS, etc. ──────────
+      # These are now stored in the app_settings database table.
+      # Change them via the Settings UI or API.
     ports:
-      - "8000:8000"
+      - "${PORT:-5000}:${PORT:-5000}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:${PORT:-5000}/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     volumes:
       - ./logs:/app/logs
-    healthcheck:
-      test:         ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval:     15s
-      timeout:      10s
-      retries:      5
-      start_period: 90s      # allow time for gunicorn + DB init
-    restart: unless-stopped
-    networks:
-      - greenops
 
-  # ── Nginx (dashboard + API proxy) ──────────────────────────────────────────
-  nginx:
+  # ── Dashboard (optional: nginx static file server) ─────────────────────────
+  dashboard:
     image: nginx:alpine
-    container_name: greenops-nginx
-    ports:
-      - "80:80"
+    restart: unless-stopped
+    depends_on:
+      - server
     volumes:
       - ./dashboard:/usr/share/nginx/html:ro
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      server:
-        condition: service_healthy    # wait until /health returns 200
-    restart: unless-stopped
-    networks:
-      - greenops
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
-  postgres_data:
-
-networks:
-  greenops:
-    driver: bridge
+  db_data:
+    driver: local
