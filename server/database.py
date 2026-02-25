@@ -151,5 +151,15 @@ class Database:
                     logger.warning(f"Error during pool close: {exc}")
                 self._pool = None
 
+    def commit(self) -> None:
+    """Explicit commit — only needed outside get_connection() context manager."""
+    # The get_connection() context manager auto-commits on success.
+    # This is a no-op stub for code that calls db.commit() explicitly,
+    # since all writes through execute_query() already commit via the CM.
+        pass
+
+    def rollback(self) -> None:
+    """No-op stub — rollback is handled inside get_connection() on exception."""
+        pass
 
 db = Database()

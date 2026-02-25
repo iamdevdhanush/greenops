@@ -295,12 +295,6 @@ def get_machine_id() -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class Agent:
-    """Main agent loop."""
-
-    CONNECT_TIMEOUT = 10   # seconds
-    READ_TIMEOUT    = 30   # seconds
-    MAX_BACKOFF     = 300  # seconds (5 min max retry wait)
-
     def __init__(self, server_url: str, interval: int) -> None:
         self.server_url  = server_url.rstrip("/")
         self.interval    = interval
@@ -310,15 +304,35 @@ class Agent:
         self._session    = requests.Session()
         self._session.headers.update({"Content-Type": "application/json"})
         self._fail_count = 0
-
-        logger.info(f"Agent starting — server={self.server_url} id={self.machine_id} interval={self.interval}s")
-
-        # Graceful shutdown
+        self._token: Optional[str] = None   # ADD THIS
+        
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
 
+    def _register(self) -> None:
+        """Register with server and obtain auth token."""
+        hostname = socket.gethostname()
+        resp = self._session.post(
+            f"{self.server_url}/api/agents/register",
+            json={
+                "mac_address": self.machine_id,
+                "hostname": hostname,
+                "os_type": platform.system(),
+                "os_version": platform.version(),
+            },
+            timeout=(self.CONNECT_TIMEOUT, self.READ_TIMEOUT),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self._token = data["token"]
+        self._session.headers.update(
+            {"Authorization": f"Bearer {self._token}"}
+        )
+        logger.info(f"Registered: machine_id={data['machine_id']}")
+
     def run(self) -> None:
-        """Main loop: collect → send → sleep → repeat."""
+        # Register first
+        self._register()
         while self._running:
             start = time.monotonic()
             try:
@@ -327,35 +341,23 @@ class Agent:
             except Exception as exc:
                 self._fail_count += 1
                 wait = min(self.interval * self._fail_count, self.MAX_BACKOFF)
-                logger.error(f"Agent tick error (attempt {self._fail_count}): {exc}; retrying in {wait}s")
+                logger.error(f"Tick error (attempt {self._fail_count}): {exc}; retry in {wait}s")
                 time.sleep(wait)
                 continue
-
-            # Sleep for remainder of interval
             elapsed = time.monotonic() - start
-            sleep_for = max(0, self.interval - elapsed)
-            time.sleep(sleep_for)
+            time.sleep(max(0, self.interval - elapsed))
 
     def _tick(self) -> None:
-        """One collection + send cycle."""
         payload = self.metrics.collect(self.machine_id)
-        logger.debug(
-            f"Heartbeat → idle={payload['idle_seconds']}s "
-            f"cpu={payload['cpu_usage']}% mem={payload['memory_usage']}% "
-            f"uptime={payload['uptime_seconds']}s"
-        )
-
         resp = self._session.post(
-            f"{self.server_url}/api/heartbeat",
+            f"{self.server_url}/api/agents/heartbeat",  # FIXED PATH
             json=payload,
             timeout=(self.CONNECT_TIMEOUT, self.READ_TIMEOUT),
         )
         resp.raise_for_status()
         data = resp.json()
-
         command = data.get("command")
         if command:
-            logger.info(f"Received command: {command!r}")
             self._execute_command(command)
 
     def _execute_command(self, command: str) -> None:
