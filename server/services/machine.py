@@ -259,12 +259,12 @@ class MachineService:
 
         if not stats or int(stats["total_machines"]) == 0:
             return {
-                "total_machines":         0,
-                "online_machines":        0,
-                "idle_machines":          0,
-                "offline_machines":       0,
+                "total_machines":          0,
+                "online_machines":         0,
+                "idle_machines":           0,
+                "offline_machines":        0,
                 "total_energy_wasted_kwh": 0.0,
-                "estimated_cost_usd":     0.0,
+                "estimated_cost_usd":      0.0,
                 "average_idle_percentage": 0.0,
             }
 
